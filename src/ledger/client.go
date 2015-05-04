@@ -65,9 +65,9 @@ func (ck *Clerk) GetBalance(account string) (float, bool) {
 	XID := nrand()
 	args := GetBalanceArgs{account, XID}
 	var reply GetBalanceReply
-	ok := false
 
 	to := 10 * time.Millisecond
+	ok := false
 	for !ok {
 		for i := 0; !ok && i < len(ck.servers); i++ {
 			ok = call(ck.servers[i], "Ledger.GetBalance", args, &reply)
@@ -88,12 +88,13 @@ func (ck *Clerk) GetBalance(account string) (float, bool) {
 
 // sends a Transction to be executed on the system
 // return false if the transaction is invalid
-func (ck *Clerk) Transaction(from string, to string, value float, XID int64, signature string) bool {
+func (ck *Clerk) Transaction(from string, to string, value float, signature string) bool {
+	XID := nrand()
 	args := TransactionArgs{from, to, value, XID, signature}
 	var reply TransactionReply
-	ok := false
 
 	to := 10 * time.Millisecond
+	ok := false
 	for !ok {
 		for i := 0; !ok && i < len(ck.servers); i++ {
 			ok = call(ck.servers[i], "Ledger.Transaction", args, &reply)
@@ -110,4 +111,25 @@ func (ck *Clerk) Transaction(from string, to string, value float, XID int64, sig
 		}
 	}
 	return true
+}
+
+func (ck *Clerk) InsertCoins(account string, value float) {
+	XID := nrand()
+	args := InsertCoinsArgs{account, value, XID}
+	var reply InsertCoinsReply
+
+	to := 10 * time.Millisecond
+	ok := false
+	for !ok {
+		for i := 0; !ok && i < len(ck.servers); i++ {
+			ok = call(ck.servers[i], "Ledger.InsertCoins", args, &reply)
+			if reply.Err != OK {
+				ok = false
+			}
+		}
+		if !ok {
+			time.Sleep(to)
+			to *= 2
+		}
+	}
 }

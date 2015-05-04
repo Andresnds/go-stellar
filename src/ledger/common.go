@@ -3,6 +3,7 @@ package ledger
 const (
 	OK                    = "OK"
 	ErrNoAccount          = "ErrNoAccount"
+	ErrInsuficientBalance = "ErrInsuficientBalance"
 	ErrInvalidTranscation = "ErrInvalidTranscation"
 )
 
@@ -16,7 +17,7 @@ type TransactiondArgs struct {
 	Signature string
 }
 
-type TransactiondReply struct {
+type TransactionReply struct {
 	Err Err
 }
 
@@ -28,4 +29,14 @@ type GetBalanceArgs struct {
 type GetBalanceReply struct {
 	Err     Err
 	Balance float
+}
+
+type InsertCoinsArgs struct {
+	Account string
+	Value   float
+	XID     int64
+}
+
+type InsertCoinsReply struct {
+	Err Err
 }

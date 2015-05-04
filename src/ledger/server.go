@@ -27,7 +27,7 @@ type Op struct {
 	To        string
 	Value     float
 	Signature string
-    XID       int64
+	XID       int64
 	Op        string
 }
 
@@ -53,22 +53,22 @@ func (lg *Ledger) catchUp(seq int) {
 }
 
 func (lg *Ledger) replicate(op Op) bool {
-    lg.px.Start(lg.seq, op)
-    to := 10 * time.Millisecond
-    for {
-        status, value := lg.px.Status(lg.seq)
-        switch status {
-        case paxos.Decided:
-            if value == op {
-                return true
-            } else {
-                return false
-            }
-        default:
-            time.Sleep(to)
-            to *= 2
-        }
-    }
+	lg.px.Start(lg.seq, op)
+	to := 10 * time.Millisecond
+	for {
+		status, value := lg.px.Status(lg.seq)
+		switch status {
+		case paxos.Decided:
+			if value == op {
+				return true
+			} else {
+				return false
+			}
+		default:
+			time.Sleep(to)
+			to *= 2
+		}
+	}
 }
 
 func (lg *Ledger) replicateUntilDecide(op Op) error {
@@ -93,27 +93,30 @@ func (lg *Ledger) replicateUntilDecide(op Op) error {
 }
 
 func (lg *Ledger) applyOperations(XID int64) error {
-    to := 10 * time.Millisecond
-    for !lg.seen[XID] {
-        switch status, value := lg.px.Status(lg.done); status {
-        case paxos.Decided:
-            op := value.(Op)
-            if !lg.seen[op.XID] {
-                if op.Op == "Transaction" {
-                    lg.balances[op.From] -= op.Value
-                    lg.balances[op.To] += op.Value
-                }
-                lg.seen[op.XID] = true
-            }
-            lg.px.Done(lg.done)
-            lg.done++
-            to = 10 * time.Millisecond
-        default:
-            time.Sleep(to)
-            to *= 2
-        }
-    }
-    return nil
+	to := 10 * time.Millisecond
+	for !lg.seen[XID] {
+		switch status, value := lg.px.Status(lg.done); status {
+		case paxos.Decided:
+			op := value.(Op)
+			if !lg.seen[op.XID] {
+				switch op.Op {
+				case "Transaction":
+					lg.balances[op.From] -= op.Value
+					lg.balances[op.To] += op.Value
+				case "InsertCoins":
+					lg.balances[op.To] += op.Value
+				}
+				lg.seen[op.XID] = true
+			}
+			lg.px.Done(lg.done)
+			lg.done++
+			to = 10 * time.Millisecond
+		default:
+			time.Sleep(to)
+			to *= 2
+		}
+	}
+	return nil
 }
 
 func (lg *Ledger) GetBalance(args *GetBalanceArgs, reply *GetBalanceReply) error {
@@ -129,7 +132,7 @@ func (lg *Ledger) GetBalance(args *GetBalanceArgs, reply *GetBalanceReply) error
 	op := Op{
 		From: args.Account,
 		To:   args.Account,
-        XID:  args.XID,
+		XID:  args.XID,
 		Op:   "GetBalance",
 	}
 
@@ -152,7 +155,7 @@ func (lg *Ledger) Transaction(args *TransactionArgs, reply *TransactionReply) er
 		return nil
 	}
 
-    // TODO: verify signature
+	// TODO: verify signature
 
 	op := Op{
 		From:      args.From,
@@ -160,26 +163,50 @@ func (lg *Ledger) Transaction(args *TransactionArgs, reply *TransactionReply) er
 		Value:     args.Value,
 		XID:       args.XID,
 		Signature: args.Signature,
-        Op:        "Transaction",
+		Op:        "Transaction",
 	}
 
-    for ok := false; !ok {
-        dumbID := nrand()
-        lg.replicateUntilDecide(Op{Op: "Dumb", XID: dumbID})
-        lg.applyOperations(dumbID)
-        lg.seq++
+	for ok := false; !ok; ok = lg.replicate(op) {
+		dumbID := nrand()
+		lg.replicateUntilDecide(Op{Op: "Dumb", XID: dumbID})
+		lg.applyOperations(dumbID)
 
-        if lg.balances[args.from] < args.Value {
-        	reply.Err = ErrInvalidTranscation
-        	return nil
-        }
+		if lg.balances[args.from] < args.Value {
+			reply.Err = ErrInsuficientBalance
+			return nil
+		}
 
-        ok = lg.replicate(op)
-    }
+		lg.seq++
+	}
 
 	reply.Err = OK
-
 	lg.replyBuffer[args.XID] = ""
+	return nil
+}
+
+func (lg *Ledger) InsertCoins(args *InsertCoinsArgs, reply *InsertCoinsReply) error {
+	lg.mu.Lock()
+	defer lg.mu.Unlock()
+
+	if _, ok := lg.replyBuffer[args.XID]; ok {
+		reply.Err = OK
+		return nil
+	}
+
+	// TODO: some way to verify it
+
+	op := Op{
+		To:    args.Account,
+		Value: args.Value,
+		XID:   args.XID,
+		Op:    "InsertCoins",
+	}
+
+	lg.replicateUntilDecide(op)
+	lg.applyOperations(args.XID)
+
+	reply.Err = OK
+	lg.replyBuffer[args.XID] = reply.Balance
 	return nil
 }
 
