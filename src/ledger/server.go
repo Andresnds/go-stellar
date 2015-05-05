@@ -198,7 +198,7 @@ func (lg *Ledger) InsertCoins(args *InsertCoinsArgs, reply *InsertCoinsReply) er
 	}
 
 	// TODO: some way to verify it
-    if args.Value <= 0 {
+    if args.Value < 0 {
         reply.Err = ErrInvalidTranscation
         return nil
     }
