@@ -61,7 +61,7 @@ func call(srv string, rpcname string,
 // fetch the current balance for an account.
 // returns false if the account does not exist.
 //
-func (ck *Clerk) GetBalance(account string) (float, bool) {
+func (ck *Clerk) GetBalance(account string) (float32, bool) {
 	XID := nrand()
 	args := GetBalanceArgs{account, XID}
 	var reply GetBalanceReply
@@ -83,17 +83,17 @@ func (ck *Clerk) GetBalance(account string) (float, bool) {
 			to *= 2
 		}
 	}
-	return reply.Value, true
+	return reply.Balance, true
 }
 
 // sends a Transction to be executed on the system
 // return false if the transaction is invalid
-func (ck *Clerk) Transaction(from string, to string, value float, signature string) bool {
+func (ck *Clerk) Transaction(from string, to string, value float32, signature string) bool {
 	XID := nrand()
 	args := TransactionArgs{from, to, value, XID, signature}
 	var reply TransactionReply
 
-	to := 10 * time.Millisecond
+	t := 10 * time.Millisecond
 	ok := false
 	for !ok {
 		for i := 0; !ok && i < len(ck.servers); i++ {
@@ -105,15 +105,20 @@ func (ck *Clerk) Transaction(from string, to string, value float, signature stri
 				return false
 			}
 		}
+
+        if reply.Err == ErrInsuficientBalance {
+            return false
+        }
+
 		if !ok {
-			time.Sleep(to)
-			to *= 2
+			time.Sleep(t)
+			t *= 2
 		}
 	}
 	return true
 }
 
-func (ck *Clerk) InsertCoins(account string, value float) {
+func (ck *Clerk) InsertCoins(account string, value float32) {
 	XID := nrand()
 	args := InsertCoinsArgs{account, value, XID}
 	var reply InsertCoinsReply

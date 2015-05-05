@@ -25,7 +25,7 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 type Op struct {
 	From      string
 	To        string
-	Value     float
+	Value     float32
 	Signature string
 	XID       int64
 	Op        string
@@ -39,14 +39,14 @@ type Ledger struct {
 	unreliable int32 // for testing
 	px         *paxos.Paxos
 
-	balances    map[string]float
+	balances    map[string]float32
 	seen        map[int64]bool
-	replyBuffer map[int64]string
+	replyBuffer map[int64]float32
 	done        int
 	seq         int
 }
 
-func (lg *Ledger) catchUp(seq int) {
+func (lg *Ledger) catchUp() {
 	for dec, _ := lg.px.Status(lg.seq); dec == paxos.Decided || lg.seq < lg.done; dec, _ = lg.px.Status(lg.seq) {
 		lg.seq++
 	}
@@ -156,6 +156,10 @@ func (lg *Ledger) Transaction(args *TransactionArgs, reply *TransactionReply) er
 	}
 
 	// TODO: verify signature
+    if args.Value <= 0 {
+        reply.Err = ErrInvalidTranscation
+        return nil
+    }
 
 	op := Op{
 		From:      args.From,
@@ -171,7 +175,7 @@ func (lg *Ledger) Transaction(args *TransactionArgs, reply *TransactionReply) er
 		lg.replicateUntilDecide(Op{Op: "Dumb", XID: dumbID})
 		lg.applyOperations(dumbID)
 
-		if lg.balances[args.from] < args.Value {
+		if lg.balances[args.From] < args.Value {
 			reply.Err = ErrInsuficientBalance
 			return nil
 		}
@@ -180,7 +184,7 @@ func (lg *Ledger) Transaction(args *TransactionArgs, reply *TransactionReply) er
 	}
 
 	reply.Err = OK
-	lg.replyBuffer[args.XID] = ""
+	lg.replyBuffer[args.XID] = 0.0
 	return nil
 }
 
@@ -194,6 +198,10 @@ func (lg *Ledger) InsertCoins(args *InsertCoinsArgs, reply *InsertCoinsReply) er
 	}
 
 	// TODO: some way to verify it
+    if args.Value <= 0 {
+        reply.Err = ErrInvalidTranscation
+        return nil
+    }
 
 	op := Op{
 		To:    args.Account,
@@ -206,7 +214,7 @@ func (lg *Ledger) InsertCoins(args *InsertCoinsArgs, reply *InsertCoinsReply) er
 	lg.applyOperations(args.XID)
 
 	reply.Err = OK
-	lg.replyBuffer[args.XID] = reply.Balance
+	lg.replyBuffer[args.XID] = 0.0
 	return nil
 }
 
@@ -248,9 +256,9 @@ func StartServer(servers []string, me int) *Ledger {
 	lg := new(Ledger)
 	lg.me = me
 
-	lg.balances = make(map[string]float)
+	lg.balances = make(map[string]float32)
 	lg.seen = make(map[int64]bool)
-	lg.replyBuffer = make(map[int64]string)
+	lg.replyBuffer = make(map[int64]float32)
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(lg)

@@ -9,10 +9,10 @@ const (
 
 type Err string
 
-type TransactiondArgs struct {
+type TransactionArgs struct {
 	From      string
 	To        string
-	Value     float
+	Value     float32
 	XID       int64
 	Signature string
 }
@@ -28,12 +28,12 @@ type GetBalanceArgs struct {
 
 type GetBalanceReply struct {
 	Err     Err
-	Balance float
+	Balance float32
 }
 
 type InsertCoinsArgs struct {
 	Account string
-	Value   float
+	Value   float32
 	XID     int64
 }
 
