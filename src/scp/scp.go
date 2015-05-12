@@ -163,49 +163,71 @@ func (scp *ScpNode) step1(seq int) {
 		return
 	}
 
-	quorums := scp.getQuorums
+	quorums := scp.getQuorums()
 
-	// Quorum all votes on aborting b's smaller and incompatible with 'beta'
+	// Quorum all votes/accepts on aborting b's smaller and incompatible with 'beta'
 	// then set p = 'beta'
+	if bMin, ok := scp.checkQuorums(seq, "b"); ok {
+		scp.updatePs(seq, bMin)
+	}
+
+	if pMin, ok := scp.checkQuorums(seq, "p"); ok {
+		scp.updatePs(seq, pMin)
+	}
+
+	if pOldMin, ok := scp.checkQuorums(seq, "pOld"); ok {
+		scp.updatePs(seq, pOldMin)
+	}
+
+	// V-BlockingSet all accepts on aborting b's smaller and incompatible with 'beta'
+	// then set p = 'beta'
+	if pMin, ok := scp.checkVblockings(seq, "p"); ok {
+		scp.updatePs(seq, pMin)
+	}
+
+	if pOldMin, ok := scp.checkVBlockings(seq, "pOld"); ok {
+		scp.updatePs(seq, pOldMin)
+	}
+}
+
+func (scp *ScpNode) updatePs (seq int, newP Ballot) {
+	slot := scp.slots[seq]
+
+	// Only update pOld if necessary
+	if _, compatible := compareBallots(pOldMin, slot.p); compatible {
+		slot.pOld = p
+	}
+	slot.p = newP
+}
+
+func (scp *ScpNode) checkQuorums(field string) (Ballot, bool) {
+	slot := scp.slots[seq]
 
 	for quorum := range quorums {
-		if bMin, ok := quorum.getMinCompatible("b"); ok {
-			if greater, _ := compareBallots(bMin, slot.p) {
-				slot.p = bMin
-				return
+		if minBallot, ok := scp.minCompatible(quorum, field); ok {
+			if greater, compatible := compareBallots(minBallot, slot.p); greater {
+				return minBallot, true
+
+				// Update p and pOld
+				if !compatible {
+					slot.pOld = slot.p
+				}
+				slot.p = minBallot
+				return true
 			}
 		}
 	}
-
-	for quorum := range quorums {
-		if pMin, ok := quorum.getMinCompatible("p"); ok {
-			if greater, _ := compareBallots(pMin, slot.p) {
-				slot.p = pMin
-				return
-			}
-		}
-	}
-
-	for quorum := range quorums {
-		if pOldMin, ok := quorum.getMinCompatible("pOld"); ok {
-			if greater, _ := compareBallots(pOldMin, slot.p) {
-				slot.p = pOld
-				return
-			}
-		}
-	}
+	return Ballot{}, false
 }
 
 func (scp *ScpNode) getQuorums() []Quorum {
 }
 
-// If there each node on the quorum has a compatible field, returns the minimum ballot of these
+// If each node on the quorum has a compatible field, returns the minimum ballot of these
 // else returns a 0-ballot and false
 // field: b, p, pOld or c
-func (quorum Quorum) getMinCompatible(field string) (Ballot, bool) {
+func (scp *ScpNode) minCompatible(quorum Quorum, field string) (Ballot, bool) {
 }
-
-
 
 func (scp *ScpNode) step2() {
 
