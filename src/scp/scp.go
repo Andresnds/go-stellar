@@ -7,7 +7,6 @@ package scp
 // ================================================================= //
 
 type Phase int
-
 const (
 	PREPARE Phase = iota + 1
 	FINISH
@@ -21,35 +20,64 @@ type ScpNode struct {
 	peers map[int]string // All the peers discovered so far
 	slots map[int]*Slot
 
-	// What about quorum slices, how to represent them?
+	quorumSlices []QuorumSlice
+	peersSlices  map[int][]QuorumSlice
 }
 
 type Slot struct {
-	b Ballot
-	p Ballot
-	p_other Ballot
-	c Ballot
-	//messages map[int]Message[] // Every Message from every node: (node id) -> (messages from it)
+	b        Ballot
+	p        Ballot
+	pOld     Ballot
+	c        Ballot
 	messages map[int]Message // Last message from every node
-	phase Phase
+	phi      Phase
 }
 
-type QuorumSlice int[]
+type QuorumSlice []int
 
-type Quorum int[]
+type Quorum [][]int
+
+/* -------- Ballot -------- */
 
 type Ballot struct {
 	n int
-	v int // could be interface{}
+	v ledger.Op
 }
 
-func (b Ballot) compareTo(otherB Ballot) {
+// Returns two bools: b1 > b2 and b1 ~ b2
+func (scp *ScpNode)  compare(b1, b2 Ballot) (greater, compatible bool) {
+	greater = b1.n > b2.n
+	compatible = b1.v == b2.v
+	return
+}
+
+/* -------- Init -------- */
+
+func (scp *ScpNode) Init(quorumSlices []QuorumSlice) {
+	scp.QuorumSlice = make([]QuorumSlice)
+	for _, qs := range quorumSlices {
+
+	}
+}
+
+
+/* -------- Quorum Slices -------- */
+
+func (scp *ScpNode) SyncQuorumSlice(args *SyncQSArgs, reply *SyncQSReply) {
 
 }
 
-// ============================================================ //
-// ===== ===== ===== ===== RPC HANDLERS ===== ===== ===== ===== //
-// ============================================================ //
+/* -------- Message -------- */
+
+type Message struct {
+	b    Ballot
+	p    Ballot
+	pOld Ballot
+	c    Ballot
+	phi  Phase
+}
+
+// ------- RPC HANDLERS ------- //
 
 // Reads and process the message from other scp nodes
 func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessageReply) error {
@@ -70,9 +98,7 @@ func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessa
 	}
 }
 
-// ====================================================== //
-// ===== ===== ===== ===== EXTRAS ===== ===== ===== ===== //
-// ====================================================== //
+// -------- Broadcast -------- //
 
 func (scp *ScpNode) broadcastMessage(message) {
 	// Create args from this message
@@ -81,25 +107,22 @@ func (scp *ScpNode) broadcastMessage(message) {
 
 }
 
+// -------- State -------- //
+
 // Tries to update it's state, given the information in M
 // Returns: bool stating if updated or not
 // XXX Why on stellar they broadcast for every step?
 func (scp *ScpNode) tryToUpdateState(seq int) bool {
 	slot := scp.slots[seq]
-
-	// Step 1
-	if slot.phase == PREPARE && 
-
-	// Step 2
-
-	// Step 3
-
-	// Step 4
-
+	step0()
+	step1()
+	step2()
+	step3()
+	step4()
 }
 
 func (scp *ScpNode) step0() {
-
+	if 
 }
 
 func (scp *ScpNode) step1() {
@@ -114,6 +137,6 @@ func (scp *ScpNode) step3() {
 
 }
 
+func (scp *ScpNode) step4() {
 
-
-
+}
