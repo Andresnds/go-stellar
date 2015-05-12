@@ -9,32 +9,40 @@ const (
 	EXTERNALIZE
 )
 
+type QuorumSlice []int // nodes ids
+type Quorum []int // nodes ids
+
 type ScpNode struct {
 	mu    sync.Mutex
 	l     net.Listener
 	id    int
+
 	peers map[int]string // All the peers discovered so far
-	slots map[int]*Slot
+	peerSlices map[int][]QuorumSlice
 
-	quorumSlices []QuorumSlice
-	peersSlices  map[int][]QuorumSlice
+	slots map[int]*Slot // SCP runs in a Slot
+	quorums []Quorum
 }
-type QuorumSlice []int // nodes ids
-
-type Quorum []int // nodes ids
-
-/* -------- Slot -------- */
 
 type Slot struct {
+	// Slot state
 	b        Ballot
 	p        Ballot
 	pOld     Ballot
 	c        Ballot
-	messages map[int]Message // Last message from every node
 	phi      Phase
+
+	// Every other node's state
+	states map[int]State 
 }
 
-func (slot Slot) hasQuorum(
+type State struct {
+	b    Ballot
+	p    Ballot
+	pOld Ballot
+	c    Ballot
+	phi  Phase
+}
 
 /* -------- Ballot -------- */
 
@@ -70,29 +78,27 @@ func compareBallots(b1, b2 Ballot) (greater, compatible bool) {
 
 /* -------- Init -------- */
 
-func (scp *ScpNode) Init(quorumSlices []QuorumSlice) {
-	scp.QuorumSlice = make([]QuorumSlice)
-	for _, qs := range quorumSlices {
+func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]QuorumSlice) {
+	scp.id = id
 
+	scp.peers := make(map[int]string)
+	for nodeID, add := range peers {
+		scp.peers[nodeID] = add
 	}
+
+	scp.peerSlices := make(map[int][]QuorumSlice)
+	for nodeID, nodeSlices := range peerSlices {
+		scp.peerSlices[nodeID] = make([]QuorumSlice, len(nodeSlices)) 
+		for i, nodeSlice := range nodeSlices {
+			scp.peerSlices[nodeID][i] = nodeSlice
+		}
+	}
+
+	scp.quorums = findQuorums(scp.peerSlices)
 }
-
-
-/* -------- Quorum Slices -------- */
 
 func (scp *ScpNode) ExchangeQSlices(args *ExchangeQSlicesArgs, reply *ExchangeQSlicesReply) {
-
-}
-
-/* -------- Message -------- */
-
-type Message struct {
-	b    Ballot
-	p    Ballot
-	pOld Ballot
-	c    Ballot
-	phi  Phase
-	qSlices []QuorumSlices
+	// TO-DO: :P
 }
 
 // ------- RPC HANDLERS ------- //
@@ -125,29 +131,68 @@ func (scp *ScpNode) broadcastMessage(message) {
 
 }
 
+// -------- Quorum -------- //
+
+func (scp *ScpNode) checkQuorums(field string) (Ballot, bool) {
+	slot := scp.slots[seq]
+
+	for quorum := range scp.quorums {
+		if minBallot, ok := scp.minCompatible(quorum, field); ok {
+			if greater, compatible := compareBallots(minBallot, slot.p); greater {
+				return minBallot, true
+
+				// Update p and pOld
+				if !compatible {
+					slot.pOld = slot.p
+				}
+				slot.p = minBallot
+				return true
+			}
+		}
+	}
+	return Ballot{}, false
+}
+
+// If each node on the quorum has a compatible field, returns the minimum ballot of these
+// else returns a 0-ballot and false
+// field: b, p, pOld or c
+func (scp *ScpNode) minCompatible(quorum Quorum, field string) (Ballot, bool) {
+}
+
+// If there each node on the quorum has a compatible field, returns the minimum ballot of these
+// else returns a 0-ballot and false
+// field: b, p, pOld or c
+func (scp *ScpNode) getMinCompatible(field string) (Ballot, bool) {
+	for _, node := range scp.quorum {
+
+	}
+}
+
 // -------- State -------- //
 
 // Tries to update it's state, given the information in M
 // Returns: bool stating if updated or not
 // XXX Why on stellar they broadcast for every step?
-func (scp *ScpNode) tryToUpdateState(seq int, lastMsg Message) bool {
+func (scp *ScpNode) tryToUpdateState(seq int) bool {
 	slot := scp.slots[seq]
 
-	step0(seq, lastMsg)
-	step1()
+	step0(seq)
+	step1(seq)
 	step2()
 	step3()
 	step4()
 }
 
-func (scp *ScpNode) step0(seq int, lastMsg Message) {
+func (scp *ScpNode) step0(seq int) {
 	slot := scp.slots[seq]
 
-	greater, _ := compareBallots(lastMsg.b, slot.b)
-	_, compatible := compareBallots(lastMsg.b, slot.c)
+	for _, state := range slot.states {
+		greater, _ := compareBallots(state.b, slot.b)
+		_, compatible := compareBallots(state.b, slot.c)
 
-	if greater && compatible {
-		slot.b = lastMsg.b
+		if greater && compatible {
+			slot.b = state.b
+		}
 	}
 }
 
@@ -162,8 +207,6 @@ func (scp *ScpNode) step1(seq int) {
 	if greater, _ := compareBallots(slot.p, slot.c); !greater {
 		return
 	}
-
-	quorums := scp.getQuorums()
 
 	// Quorum all votes/accepts on aborting b's smaller and incompatible with 'beta'
 	// then set p = 'beta'
@@ -198,35 +241,6 @@ func (scp *ScpNode) updatePs (seq int, newP Ballot) {
 		slot.pOld = p
 	}
 	slot.p = newP
-}
-
-func (scp *ScpNode) checkQuorums(field string) (Ballot, bool) {
-	slot := scp.slots[seq]
-
-	for quorum := range quorums {
-		if minBallot, ok := scp.minCompatible(quorum, field); ok {
-			if greater, compatible := compareBallots(minBallot, slot.p); greater {
-				return minBallot, true
-
-				// Update p and pOld
-				if !compatible {
-					slot.pOld = slot.p
-				}
-				slot.p = minBallot
-				return true
-			}
-		}
-	}
-	return Ballot{}, false
-}
-
-func (scp *ScpNode) getQuorums() []Quorum {
-}
-
-// If each node on the quorum has a compatible field, returns the minimum ballot of these
-// else returns a 0-ballot and false
-// field: b, p, pOld or c
-func (scp *ScpNode) minCompatible(quorum Quorum, field string) (Ballot, bool) {
 }
 
 func (scp *ScpNode) step2() {

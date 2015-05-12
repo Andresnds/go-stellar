@@ -1,4 +1,4 @@
-package main
+package scp
 
 import "fmt"
 import "sort"
@@ -89,6 +89,24 @@ func _find_quorum(m map[int][][]int, l1 []int, l2 []int, r [][]int, out *[][]int
 	}
 }
 
+func findQuorums(m map[int][][]int) [][]int {
+	
+	l1 := make([]int, 0, len(m))
+	for k, v := range m {
+		l1 = append(l1, k)
+		for _, s := range v {
+			sort.Ints(s)
+		}
+	}
+	sort.Ints(l1)
+
+	out := make([][]int, 0, len(m))
+	for i := 0; i < len(l1); i++ {
+		_find_quorum(m, l1[i:], []int{}, [][]int{}, &out)
+	}
+	return out
+}
+
 func test1() {
 	m := make(map[int][][]int)
 	
@@ -123,24 +141,6 @@ func test2() {
 	fmt.Println(out)
 }
 
-func find_quorum(m map[int][][]int) [][]int {
-	
-	l1 := make([]int, 0, len(m))
-	for k, v := range m {
-		l1 = append(l1, k)
-		for _, s := range v {
-			sort.Ints(s)
-		}
-	}
-	sort.Ints(l1)
-
-	out := make([][]int, 0, len(m))
-	for i := 0; i < len(l1); i++ {
-		_find_quorum(m, l1[i:], []int{}, [][]int{}, &out)
-	}
-	return out
-}
-
 func test3() {
 	m := make(map[int][][]int)
 	
@@ -170,5 +170,5 @@ func main() {
 	// test1()
 	// test2()
 	// test3()
-	test4()
+	// test4()
 }
