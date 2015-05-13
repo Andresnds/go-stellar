@@ -80,6 +80,10 @@ func (state State) getCopy() State {
 	return copyState
 }
 
+func (state State) isInitialized() bool {
+	return state.B.N != 0
+}
+
 /* -------- Ballot -------- */
 
 type Ballot struct {
@@ -470,8 +474,8 @@ func (scp *ScpNode) hasQuorum(seq int, isValid func(State) bool) bool {
 // Checks if all quorum members satisfy the validator isValid
 func (scp *ScpNode) isQuorumValid(seq int, quorum Quorum, isValid func(State) bool) bool {
 	for _, nodeId := range quorum {
-		state := scp.slots[seq].states[nodeId]
-		if !isValid(*state) {
+		state := *(scp.slots[seq].states[nodeId])
+		if !state.isInitialized() || !isValid(state) {
 			return false
 		}
 	}
@@ -491,8 +495,8 @@ func (scp *ScpNode) hasVBlocking(seq int, isValid func(State) bool) bool {
 // A slice is blocked if any of it's elements satisfies the validator
 func (scp *ScpNode) isSliceBlocked(seq int, slice QuorumSlice, isValid func(State) bool) bool {
 	for _, nodeId := range slice {
-		state := scp.slots[seq].states[nodeId]
-		if isValid(*state) {
+		state := *(scp.slots[seq].states[nodeId])
+		if state.isInitialized() && isValid(state) {
 			return true
 		}
 	}
@@ -594,15 +598,16 @@ func (scp *ScpNode) init(id int, servers []string, peerSlices map[int][][]int) {
 
 func (scp *ScpNode) getSlot(seq int) (slot *Slot) {
 	if _, ok := scp.slots[seq]; !ok {
-		scp.DPrintf("checkSlotAllocation(seq=%d): allocating new slot", seq)
+		scp.DPrintf("getSlot(seq=%d): allocating new slot %d", seq, seq)
 		newSlot := Slot{}
-		newSlot.states = make(map[int]*State)
-
-		state := State{}
-		state.Phi = PREPARE
-		
-		newSlot.states[scp.me] = &state
 		scp.slots[seq] = &newSlot
+
+		// Allocate a State for each peer
+		newSlot.states = make(map[int]*State)
+		for peerId, _ := range scp.peers {
+			newSlot.states[peerId] = &State{}
+		}
+		newSlot.states[scp.me] = &State{Phi: PREPARE}
 	}
 	return scp.slots[seq]
 }
