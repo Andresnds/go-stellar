@@ -276,162 +276,166 @@ func (scp *ScpNode) tryToUpdateState(seq int) bool {
 // Try to update b
 // TODO: Not change when phi = EXTERNALIZE?
 func (scp *ScpNode) step0(seq int) {
-	slot := scp.slots[seq]
+	myState := scp.slots[seq].states[scp.me]
+
+	if myState.phi == EXTERNALIZE {
+		return
+	}
 
 	for _, state := range slot.states {
-		greater, _ := compareBallots(state.b, slot.b)
-		_, compatible := compareBallots(state.b, slot.c)
+		greaterThanB, _ := compareBallots(state.b, myState.b)
+		_, compatibleWithC := compareBallots(state.b, myState.c)
 
-		if greater && compatible {
-			slot.b = state.b
+		if greaterThanB && compatibleWithC {
+			myState.b = state.b
 		}
 	}
 }
 
 // Try to update p
 func (scp *ScpNode) step1(seq int) {
-	slot := scp.slots[seq]
+	myState := scp.slots[seq].states[scp.me]
 
 	// Conditions: phi = PREPARE and b > p > c
-	if slot.phi != PREPARE {
+	if myState.phi != PREPARE {
 		return
 	}
 
-	if greater, _ := compareBallots(slot.b, slot.p); !greater {
+	if greater, _ := compareBallots(myState.b, myState.p); !greater {
 		return
 	}
 
-	if greater, _ := compareBallots(slot.p, slot.c); !greater {
+	if greater, _ := compareBallots(myState.p, myState.c); !greater {
 		return
 	}
 
 	// To accept prepare b, we need a quorum voting/accepting prepare b
-	// Hence we need a quorum with b = slot.b or p = slot.b or pOld = slot.b
+	// Hence we need a quorum with b = myState.b or p = myState.b or pOld = myState.b
 	isValidB := func (peerState State) bool {
-		return areBallotsEqual(peerState.b, slot.b)
+		return areBallotsEqual(peerState.b, myState.b)
 	}
 
 	isValidP := func (peerState State) bool {
-		return areBallotsEqual(peerState.p, slot.b)
+		return areBallotsEqual(peerState.p, myState.b)
 	}
 
 	isValidPOld := func (peerState State) bool {
-		return areBallotsEqual(peerState.pOld, slot.b)
+		return areBallotsEqual(peerState.pOld, myState.b)
 	}
 
 	if scp.hasQuorum(isValidB) || scp.hasQuorum(isValidP) || scp.hasQuorum(isValidPOld) {
-		scp.updatePs(seq, slot.b)
+		scp.updatePs(seq, myState.b)
 		return
 	}
 
 	// Or we need a v-blocking accepting prepare b
-	// Hence we need a v-blocking with p = slot.b or pOld = slot.b
+	// Hence we need a v-blocking with p = myState.b or pOld = myState.b
 	if scp.hasVBlocking(isValidP) || scp.hasVBlocking(isValidPOld) {
-		scp.updatePs(seq, slot.b)
+		scp.updatePs(seq, myState.b)
 		return
 	}
 }
 
 func (scp *ScpNode) updatePs(seq int, newP Ballot) {
-	slot := scp.slots[seq]
+	myState:= scp.slots[seq].states[scp.me]
 
 	// Only update pOld if necessary
-	if _, compatible := compareBallots(pOldMin, slot.p); compatible {
-		slot.pOld = slot.p
+	if _, compatible := compareBallots(pOldMin, myState.p); compatible {
+		myState.pOld = myState.p
 	}
-	slot.p = newP
+	myState.p = newP
 
 	// Ensure the invariant p ~ c
-	if _, compatible := compareBallots(slot.p, slot.c); !compatible {
+	if _, compatible := compareBallots(myState.p, myState.c); !compatible {
 		// This means that we went from voting to commit c to accept (abort c)
 		// by setting c = 0, which is valid in FBA voting
-		slot.c = Ballot{}
+		myState.c = Ballot{}
 	}
 }
 
 // Try to update c
 func (scp *ScpNode) step2(seq int) {
-	slot := scp.slots[seq]
+	myState:= scp.slots[seq].states[scp.me]
 
 	// Conditions: phi = PREPARE, b = p, b != c
-	if slot.phi != PREPARE {
+	if myState.phi != PREPARE {
 		return
 	}
 
-	if !areBallotsEqual(slot.b, slot.p) {
+	if !areBallotsEqual(myState.b, myState.p) {
 		return
 	}
 
-	if areBallotsEqual(slot.b, slot.c) {
+	if areBallotsEqual(myState.b, myState.c) {
 		return
 	}
 
 	// To vote on commit c, we need to confirm prepare b,
 	// so we need a quorum accepting prepare b
-	// Hence we need a quorum with p = slot.b(= slot.p) or pOld = slot.b(= slot.p)
+	// Hence we need a quorum with p = myState.b(= myState.p) or pOld = myState.b(= myState.p)
 	isValidP := func (peerState State) bool {
-		return areBallotsEqual(peerState.p, slot.b)
+		return areBallotsEqual(peerState.p, myState.b)
 	}
 
 	isValidPOld := func (peerState State) bool {
-		return areBallotsEqual(peerState.pOld, slot.b)
+		return areBallotsEqual(peerState.pOld, myState.b)
 	}
 
 	if scp.hasQuorum(isValidP) || scp.hasQuorum(isValidPOld) {
-		slot.c = slot.b
+		myState.c = myState.b
 		return
 	}
 }
 
 // Try to update phi: PREPARE -> FINISH
 func (scp *ScpNode) step3(seq int) {
-	slot := scp.slot[seq]
+	myState:= scp.slot[seq].states[scp.me]
 
 	// Conditions: b = p = c
-	if !(areBallotsEqual(slot.b, slot.p) && areBallotsEqual(slot.p, slot.c)) {
+	if !(areBallotsEqual(myState.b, myState.p) && areBallotsEqual(myState.p, myState.c)) {
 		return
 	}
 
 	// To accept commit c, we need a quorum voting/accepting commit c
 	// Hence we need a quorum with our c
 	isValid := func (peerState State) bool {
-		return areBallotsEqual(peerState.c, slot.c)
+		return areBallotsEqual(peerState.c, myState.c)
 	}
 
 	if scp.hasQuorum(isValid) {
-		slot.phi = FINISH
+		myState.phi = FINISH
 		return
 	}
 
 	// Or we need a v-blocking accepting commit c
 	// Hence we need a v-blocking with our c and phi = FINISH
 	isValid = func (peerState State) bool {
-		return areBallotsEqual(peerState.c, slot.c) && (peerState.phi == FINISH)
+		return areBallotsEqual(peerState.c, myState.c) && (peerState.phi == FINISH)
 	}
 
 	if scp.hasVBlocking(isValid) {
-		slot.phi = FINISH
+		myState.phi = FINISH
 		return
 	}
 }
 
 // Try to update phi: FINISH -> EXTERNALIZE
 func (scp *ScpNode) step4(seq int) {
-	slot := scp.slot[seq]
+	myState:= scp.slot[seq].states[scp.me]
 
 	// Conditions : phi = FINISH
-	if slot.phi != FINISH {
+	if myState.phi != FINISH {
 		return
 	}
 
 	// To confirm commit c, we need a quorum accepting commit c
 	// Hence we need a quorum with our c and phi = FINISH
 	isValid := func (peerState State) bool {
-		return areBallotsEqual(peerState.c, slot.c) && (peerState.phi == FINISH)
+		return areBallotsEqual(peerState.c, myState.c) && (peerState.phi == FINISH)
 	}
 
 	if scp.hasQuorum(isValid) {
-		slot.phi = EXTERNALIZE
+		myState.phi = EXTERNALIZE
 		return
 	}
 }
