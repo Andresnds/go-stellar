@@ -11,7 +11,6 @@ import "syscall"
 import "encoding/gob"
 import "math/rand"
 import "time"
-import "ledger"
 
 /* -------- Debugging -------- */
 
@@ -92,7 +91,7 @@ func (state State) String() string {
 
 type Ballot struct {
 	N int
-	V ledger.Op
+	V Op
 }
 
 // Returns two bools: b1 > b2 and b1 ~ b2
@@ -142,7 +141,7 @@ func min(a, b int) int {
 
 /* -------- API -------- */
 
-func (scp *ScpNode) Start(seq int, v ledger.Op) {
+func (scp *ScpNode) Start(seq int, v Op) {
 	// Locked
 	scp.mu.Lock()
 	defer scp.mu.Unlock()
@@ -166,7 +165,7 @@ func (scp *ScpNode) Start(seq int, v ledger.Op) {
 	}()
 }
 
-func (scp *ScpNode) propose(seq int, v ledger.Op) {
+func (scp *ScpNode) propose(seq int, v Op) {
 	// Locked
 	scp.mu.Lock()
 
@@ -187,7 +186,7 @@ func (scp *ScpNode) propose(seq int, v ledger.Op) {
 
 // Returns: true if a consensus was reached on seq, with it's value
 // false otherwise
-func (scp *ScpNode) Status(seq int) (bool, ledger.Op) {
+func (scp *ScpNode) Status(seq int) (bool, Op) {
 	slot := scp.getSlot(seq)
 	myState := slot.states[scp.me]
 
@@ -196,7 +195,7 @@ func (scp *ScpNode) Status(seq int) (bool, ledger.Op) {
 	if myState.Phi == EXTERNALIZE {
 		return true, myState.B.V
 	}
-	return false, ledger.Op{}
+	return false, Op{}
 }
 
 // ------- RPC HANDLERS ------- //
@@ -589,7 +588,7 @@ func (scp *ScpNode) isSliceBlocked(seq int, slice QuorumSlice, isValid func(Stat
 // me is the index of the current server in servers[].
 //
 func StartServer(servers []string, me int, peerSlices map[int][][]int) *ScpNode {
-	gob.Register(ledger.Op{})
+	gob.Register(Op{})
 	gob.Register(State{})
 
 	scp := new(ScpNode)
