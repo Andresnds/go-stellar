@@ -24,6 +24,8 @@ type ScpNode struct {
 	quorums []Quorum
 }
 
+/* -------- State -------- */
+
 type Slot struct {
 	// Slot state
 	b        Ballot
@@ -34,6 +36,10 @@ type Slot struct {
 
 	// Every other node's state
 	states map[int]*State 
+}
+
+func (slot *Slot) toState() State {
+	return State{slot.b, slot.p, slot.pOld, slot.c, slot.phi}
 }
 
 /* -------- State -------- */
@@ -127,6 +133,21 @@ func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]Quor
 	}
 
 	scp.quorums = findQuorums(scp.peerSlices)
+	// Store only the quorums which contain myself
+	for i, quorum := range scp.quorums {
+
+		contained := false
+		for _, v := quorum {
+			if v == scp.me {
+				contained = true
+				break
+			}
+		}
+
+		if !contained {
+			scp.quorums = append(scp.quorums[:i], scp.quorums[i+1:]...) // removing i'th element
+		}
+	}
 }
 
 func (scp *ScpNode) ExchangeQSlices(args *ExchangeQSlicesArgs, reply *ExchangeQSlicesReply) {
@@ -137,30 +158,65 @@ func (scp *ScpNode) ExchangeQSlices(args *ExchangeQSlicesArgs, reply *ExchangeQS
 
 // Reads and process the message from other scp nodes
 func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessageReply) error {
-	// Locking
 
-	// Unpack arguments
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 
-	// Add to this slot's messages
+	slot := scp.slots[args.Seq]
+	slot.states[args.ID] = args.State // maybe checking if message is the most updated one... ?
 
-	// Process this message / try to change state
-	scp.tryToUpdateState(...)
+	scp.tryToUpdateState(args.Seq)
 
-	if some condition {
-		// Create new message 
-
-		// Broadcast message
-		scp.broadcastMessage(message)
+	if slot.states[args.ID] != slot {
+		scp.broadcastMessage(args.Seq)
 	}
 }
 
-// -------- Broadcast -------- //
+// Broadcast message to other scp nodes
+func (scp *ScpNode) broadcastMessage(seq int) {
+	slot := scp.slots[args.Seq]
+	args := &Args{seq, scp.me, slot.toState()}
 
-func (scp *ScpNode) broadcastMessage(message) {
-	// Create args from this message
+	for id, s := range scp.peers {
+		var reply ProcessMessageReply
+		call(s, "ScpNode.ProcessMessage", args, &reply)
+	}
+}
 
-	// Send to every peer
+//
+// call() sends an RPC to the rpcname handler on server srv
+// with arguments args, waits for the reply, and leaves the
+// reply in reply. the reply argument should be a pointer
+// to a reply structure.
+//
+// the return value is true if the server responded, and false
+// if call() was not able to contact the server. in particular,
+// the replys contents are only valid if call() returned true.
+//
+// you should assume that call() will time out and return an
+// error after a while if it does not get a reply from the server.
+//
+// please use call() to send all RPCs, in client.go and server.go.
+// please do not change this function.
+//
+func call(srv string, name string, args interface{}, reply interface{}) bool {
+	c, err := rpc.Dial("unix", srv)
+	if err != nil {
+		err1 := err.(*net.OpError)
+		if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
+			fmt.Printf("paxos Dial() failed: %v\n", err1)
+		}
+		return false
+	}
+	defer c.Close()
 
+	err = c.Call(name, args, reply)
+	if err == nil {
+		return true
+	}
+
+	fmt.Println(err)
+	return false
 }
 
 // -------- State -------- //
