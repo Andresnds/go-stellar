@@ -140,10 +140,16 @@ func (scp *ScpNode) Start(seq int, v Ledger.Op) {
 	scp.mu.Lock()
 	defer scp.mu.Unlock()
 
+	// Create initial state
+	// Allocate this slot if needed
+	scp.checkSlotAllocation(seq)
+	state := scp.slots[seq].states[spc.me]
+	state.b = Ballot{1, v}
+
 	// Propose every timeout
 	// Maybe 100ms is too much
 	go func() {
-		scp.propose(v)
+		scp.propose(seq, v)
 		time.Sleep(100 * time.Millisecond)
 	}()
 }
@@ -155,7 +161,7 @@ func (scp *ScpNode) propose(seq int, v Ledger.Op) {
 
 	// Timeout! Update b if we are still looking for consensus
 	myState := scp.slot.states[scp.me]
-	if myState.b != 0 myState.phi != EXTERNALIZE {
+	if myState.phi != EXTERNALIZE {
 		myState.b.n += 1
 		scp.broadcastMessage(seq)
 	}
