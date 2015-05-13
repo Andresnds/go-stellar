@@ -146,25 +146,23 @@ func (scp *ScpNode) broadcastMessage(message) {
 // -------- Quorum -------- //
 
 // field: b, p, pOld or c
-// Check every quorum for a minCompatible ballot
-// If found, return ballot, true
-// else, return 0-ballot, false
+// Check every quorum for a minCompatible ballot (candidate), and returns the best of these (the max)
+// If not found, found = false
 func (scp *ScpNode) checkQuorums(seq int, field string) (Ballot, bool) {
 	slot := scp.slots[seq]
-
-	minBallot := Ballot{}
-	flag := false
+	bestCandidate := Ballot{} // the max of all the minCompatible ballots
+	found := false
 
 	for _, quorum := range scp.quorums {
-		if qBallot, ok := scp.minCompatible(quorum, field); ok {
-			if greater, compatible := compareBallots(minBallot, qBallot); greater {
-				minBallot = qBallot
-				flag = true
+		if minBallot, ok := scp.minCompatible(quorum, field); ok {
+			if greater, compatible := compareBallots(minBallot, bestCandidate); greater {
+				bestCandidate = minBallot
+				found = true
 			}
 		}
 	}
 
-	return minBallot, flag
+	return bestCandidate, found
 }
 
 // field: p or pOld
