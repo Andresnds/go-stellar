@@ -88,6 +88,12 @@ func compareBallots(b1, b2 Ballot) (greater, compatible bool) {
 	return
 }
 
+func areBallotsEqual(b1, b2 Ballot) bool {
+	sameN := (b2.n == b2.n)
+	_, compatible := compareBallots(b1, b2)
+	return (sameN && compatible)
+}
+
 /* -------- Init -------- */
 
 func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]QuorumSlice) {
@@ -297,8 +303,43 @@ func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 	slot.p = newP
 }
 
+// Try to update c
+// Node confirms b(= p) is prepared: a quorum of accepts that b is prepared
 func (scp *ScpNode) step2() {
+	slot := scp.slots[seq]
 
+	// Conditions: phi = PREPARE, b = p, b != c
+	if slot.phi != PREPARE {
+		return
+	}
+
+	if !areBallotsEqual(slot.b, slot.p) {
+		return
+	}
+
+	if areBallotsEqual(slot.b, slot.c) {
+		return
+	}
+
+	// Quorum all accepts on aborting b's smallers and incompatible with p
+	// then set c = b(= p)
+	if candidateP, ok := scp.checkQuorums(seq, "p"); ok {
+		if greater, _ := compareBallots(candidate, slot.p); ok {
+			// Conservatively update c to b, not to candidate
+			// so we keep the invariant c <= p <= b
+			slot.c = slot.b
+			return
+		}
+	}
+
+	if candidatePOld, ok := scp.checkQuorums(seq, "pOld"); ok {
+		if greater, _ := compareBallots(candidate, slot.p); ok {
+			// Conservatively update c to b, not to candidate
+			// so we keep the invariant c <= p <= b
+			slot.c = slot.b
+			return
+		}
+	}
 }
 
 func (scp *ScpNode) step3() {
