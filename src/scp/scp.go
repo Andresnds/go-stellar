@@ -243,11 +243,15 @@ func (scp *ScpNode) step0(seq int) {
 	}
 }
 
+// Update p
 func (scp *ScpNode) step1(seq int) {
-
 	slot := scp.slots[seq]
 
-	// Condition for this step: b > p > c
+	// Condition for this step: phi = PREPARE and b > p > c
+	if slot.phi != PREPARE {
+		return
+	}
+
 	if greater, _ := compareBallots(slot.b, slot.p); !greater {
 		return
 	}
@@ -255,8 +259,6 @@ func (scp *ScpNode) step1(seq int) {
 	if greater, _ := compareBallots(slot.p, slot.c); !greater {
 		return
 	}
-
-	// TODO: check if slot.phi is prepared
 
 	// Quorum all votes/accepts on aborting b's smaller and incompatible with 'beta'
 	// then set p = 'beta'
