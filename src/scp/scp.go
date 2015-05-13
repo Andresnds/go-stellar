@@ -117,13 +117,45 @@ func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]Quor
 	// TODO: Initialize l and listen to network
 }
 
+func (scp *ScpNode) Start(seq int, v Ledger.Op) {
+	// Locked
+	scp.mu.Lock()
+	defer scp.mu.Unlock()
+
+	// Propose with random interval between 50 and 150
+	go func() {
+		scp.propose(v)
+		randomInterval := 50 + rand.Int()%100
+		time.Sleep(randomInterval * time.Millisecond)
+	}()
+
+}
+
+func (scp *ScpNode) propose(v Ledger.Op) {
+	// Locked
+	scp.mu.Lock()
+	defer scp.mu.Unlock()
+
+	// Timeout! Update b (if not EXTERNALIZE)
+	for _, slot := range scp.slots {
+		state := slot.states[scp.me]
+		if state.b != 0 state.phi != EXTERNALIZE {
+			state.b.n += 1
+		}
+	}
+}
+
+func (scp *ScpNode) Status(seq int) (..) {
+	// TODO!
+}
+
 // ------- RPC HANDLERS ------- //
 
 // Reads and process the message from other scp nodes
 func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessageReply) error {
 	// Locked
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+	scp.mu.Lock()
+	defer scp.mu.Unlock()
 
 	// Allocate this slot if needed
 	scp.checkSlotAllocation(args.Seq)
