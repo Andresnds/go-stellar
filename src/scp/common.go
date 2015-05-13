@@ -10,3 +10,11 @@ type ProcessMessageArgs struct {
 type ProcessMessageReply struct {
 	/* Empty */
 }
+
+type ExchangeQSlicesArgs struct {
+
+}
+
+type ExchangeQSlicesReply struct {
+
+}

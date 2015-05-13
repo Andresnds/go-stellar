@@ -45,7 +45,7 @@ func _merge(l1, l2 []int) ([]int) {
 
 // assumes l1 and l2 sorted
 
-func is_subset(l1, l2 []int) bool {
+func isSubset(l1, l2 []int) bool {
 	l1_index := 0
 	l2_index := 0
 
@@ -63,7 +63,7 @@ func is_subset(l1, l2 []int) bool {
 
 // l1 sorted
 
-func _find_quorum(m map[int][][]int, l1 []int, l2 []int, r [][]int, out *[][]int) {
+func _findQuorum(m map[int][][]int, l1 []int, l2 []int, r [][]int, out *[][]int) {
 	if len(l1) == 0 {
 		return
 	}
@@ -79,18 +79,17 @@ func _find_quorum(m map[int][][]int, l1 []int, l2 []int, r [][]int, out *[][]int
 
 
 	for _, el_slice_merged := range el_merged {
-		if is_subset(el_slice_merged, l2) {
+		if isSubset(el_slice_merged, l2) {
 			*out = append(*out, el_slice_merged)
 		}
 	}
 
 	for i := 0; i < len(l1); i++ {
-		_find_quorum(m, l1[i:], l2, el_merged, out)
+		_findQuorum(m, l1[i:], l2, el_merged, out)
 	}
 }
 
-func findQuorums(m map[int][][]int) [][]int {
-	
+func _algo(m map[int][][]int) [][]int {
 	l1 := make([]int, 0, len(m))
 	for k, v := range m {
 		l1 = append(l1, k)
@@ -102,9 +101,31 @@ func findQuorums(m map[int][][]int) [][]int {
 
 	out := make([][]int, 0, len(m))
 	for i := 0; i < len(l1); i++ {
-		_find_quorum(m, l1[i:], []int{}, [][]int{}, &out)
+		_findQuorum(m, l1[i:], []int{}, [][]int{}, &out)
 	}
 	return out
+}
+
+func findQuorums(quorumSliceM map[int][]QuorumSlice) []Quorum {
+
+	// Transforming map[int][]QuorumSlice to of map[int][][]ints
+	m := make(map[int][][]int)
+	for k, v := range quorumSliceM {
+		m[k] = make([][]int, len(v))
+		for i, qSlice := range v {
+			m[k][i] = []int(qSlice)
+		}
+	}
+
+	out := _algo(m)
+
+	// Transforming [][]int to of []Quorum
+	quorumArray := make([]Quorum, len(out))
+	for i, v := range out {
+		quorumArray[i] = []int(v)
+	}
+
+	return quorumArray
 }
 
 func test1() {
@@ -120,7 +141,7 @@ func test1() {
 	r := make([][]int, 0, 0)
 	out := make([][]int, 0, 0)
 
-	_find_quorum(m, l1, l2, r, &out)
+	_findQuorum(m, l1, l2, r, &out)
 	fmt.Println(out)
 }
 
@@ -137,7 +158,7 @@ func test2() {
 	r := make([][]int, 0, 0)
 	out := make([][]int, 0, 0)
 
-	_find_quorum(m, l1, l2, r, &out)
+	_findQuorum(m, l1, l2, r, &out)
 	fmt.Println(out)
 }
 
@@ -149,7 +170,7 @@ func test3() {
 	m[3] = [][]int{ []int{2, 4} }
 	m[4] = [][]int{ []int{2, 3} }
 
-	out := find_quorum(m)
+	out := _algo(m)
 	fmt.Println(out)
 }
 
@@ -162,7 +183,7 @@ func test4() {
 	m[3] = [][]int{ []int{2, 3, 4} }
 	m[4] = [][]int{ []int{2, 3, 4} }
 
-	out := find_quorum(m)
+	out := _algo(m)
 	fmt.Println(out)
 }
 
