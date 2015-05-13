@@ -3,6 +3,7 @@ package scp
 /* Imports */
 
 type Phase int
+
 const (
 	PREPARE Phase = iota + 1
 	FINISH
@@ -10,19 +11,19 @@ const (
 )
 
 type QuorumSlice []int // nodes ids
-type Quorum []int // nodes ids
+type Quorum []int      // nodes ids
 
 type ScpNode struct {
-	mu    sync.Mutex
-	l     net.Listener
+	mu sync.Mutex
+	l  net.Listener
 
-	me int // This node's id
+	me           int // This node's id
 	quorumSlices []QuorumSlice
 
-	peers map[int]string // All the peers discovered so far
+	peers       map[int]string // All the peers discovered so far
 	peersSlices map[int][]QuorumSlice
 
-	slots map[int]*Slot // SCP runs in a Slot
+	slots   map[int]*Slot // SCP runs in a Slot
 	quorums []Quorum
 }
 
@@ -30,7 +31,7 @@ type ScpNode struct {
 
 // Holds every nodes' state, including itself
 type Slot struct {
-	states map[int]*State 
+	states map[int]*State
 }
 
 /* -------- State -------- */
@@ -100,14 +101,14 @@ func min(a, b int) int {
 func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]QuorumSlice) {
 	scp.id = id
 
-	scp.peers := make(map[int]string)
+	scp.peers = make(map[int]string)
 	for nodeID, add := range peers {
 		scp.peers[nodeID] = add
 	}
 
-	scp.peerSlices := make(map[int][]QuorumSlice)
+	scp.peerSlices = make(map[int][]QuorumSlice)
 	for nodeID, nodeSlices := range peerSlices {
-		scp.peerSlices[nodeID] = make([]QuorumSlice, len(nodeSlices)) 
+		scp.peerSlices[nodeID] = make([]QuorumSlice, len(nodeSlices))
 		for i, nodeSlice := range nodeSlices {
 			scp.peerSlices[nodeID][i] = nodeSlice
 		}
@@ -120,7 +121,7 @@ func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]Quor
 	for i, quorum := range scp.quorums {
 
 		contained := false
-		for _, v := quorum {
+		for _, v := range quorum {
 			if v == scp.me {
 				contained = true
 				break
@@ -329,15 +330,15 @@ func (scp *ScpNode) step1(seq int) {
 
 	// To accept prepare b, we need a quorum voting/accepting prepare b
 	// Hence we need a quorum with b = myState.b or p = myState.b or pOld = myState.b
-	isValidB := func (peerState State) bool {
+	isValidB := func(peerState State) bool {
 		return areBallotsEqual(peerState.b, myState.b)
 	}
 
-	isValidP := func (peerState State) bool {
+	isValidP := func(peerState State) bool {
 		return areBallotsEqual(peerState.p, myState.b)
 	}
 
-	isValidPOld := func (peerState State) bool {
+	isValidPOld := func(peerState State) bool {
 		return areBallotsEqual(peerState.pOld, myState.b)
 	}
 
@@ -355,7 +356,7 @@ func (scp *ScpNode) step1(seq int) {
 }
 
 func (scp *ScpNode) updatePs(seq int, newP Ballot) {
-	myState:= scp.slots[seq].states[scp.me]
+	myState := scp.slots[seq].states[scp.me]
 
 	// Only update pOld if necessary
 	if _, compatible := compareBallots(pOldMin, myState.p); compatible {
@@ -373,7 +374,7 @@ func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 
 // Try to update c
 func (scp *ScpNode) step2(seq int) {
-	myState:= scp.slots[seq].states[scp.me]
+	myState := scp.slots[seq].states[scp.me]
 
 	// Conditions: phi = PREPARE, b = p, b != c
 	if myState.phi != PREPARE {
@@ -391,11 +392,11 @@ func (scp *ScpNode) step2(seq int) {
 	// To vote on commit c, we need to confirm prepare b,
 	// so we need a quorum accepting prepare b
 	// Hence we need a quorum with p = myState.b(= myState.p) or pOld = myState.b(= myState.p)
-	isValidP := func (peerState State) bool {
+	isValidP := func(peerState State) bool {
 		return areBallotsEqual(peerState.p, myState.b)
 	}
 
-	isValidPOld := func (peerState State) bool {
+	isValidPOld := func(peerState State) bool {
 		return areBallotsEqual(peerState.pOld, myState.b)
 	}
 
@@ -407,7 +408,7 @@ func (scp *ScpNode) step2(seq int) {
 
 // Try to update phi: PREPARE -> FINISH
 func (scp *ScpNode) step3(seq int) {
-	myState:= scp.slot[seq].states[scp.me]
+	myState := scp.slot[seq].states[scp.me]
 
 	// Conditions: b = p = c
 	if !(areBallotsEqual(myState.b, myState.p) && areBallotsEqual(myState.p, myState.c)) {
@@ -416,7 +417,7 @@ func (scp *ScpNode) step3(seq int) {
 
 	// To accept commit c, we need a quorum voting/accepting commit c
 	// Hence we need a quorum with our c
-	isValid := func (peerState State) bool {
+	isValid := func(peerState State) bool {
 		return areBallotsEqual(peerState.c, myState.c)
 	}
 
@@ -427,7 +428,7 @@ func (scp *ScpNode) step3(seq int) {
 
 	// Or we need a v-blocking accepting commit c
 	// Hence we need a v-blocking with our c and phi = FINISH
-	isValid = func (peerState State) bool {
+	isValid = func(peerState State) bool {
 		return areBallotsEqual(peerState.c, myState.c) && (peerState.phi == FINISH)
 	}
 
@@ -439,7 +440,7 @@ func (scp *ScpNode) step3(seq int) {
 
 // Try to update phi: FINISH -> EXTERNALIZE
 func (scp *ScpNode) step4(seq int) {
-	myState:= scp.slot[seq].states[scp.me]
+	myState := scp.slot[seq].states[scp.me]
 
 	// Conditions : phi = FINISH
 	if myState.phi != FINISH {
@@ -448,7 +449,7 @@ func (scp *ScpNode) step4(seq int) {
 
 	// To confirm commit c, we need a quorum accepting commit c
 	// Hence we need a quorum with our c and phi = FINISH
-	isValid := func (peerState State) bool {
+	isValid := func(peerState State) bool {
 		return areBallotsEqual(peerState.c, myState.c) && (peerState.phi == FINISH)
 	}
 
