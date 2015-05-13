@@ -8,6 +8,7 @@ import "sync"
 import "sync/atomic"
 import "os"
 import "syscall"
+import "encoding/gob"
 import "math/rand"
 import "time"
 import "ledger"
@@ -67,11 +68,11 @@ type Slot struct {
 /* -------- State -------- */
 
 type State struct {
-	b    Ballot
-	p    Ballot
-	pOld Ballot
-	c    Ballot
-	phi  Phase
+	B    Ballot
+	P    Ballot
+	POld Ballot
+	C    Ballot
+	Phi  Phase
 }
 
 func (state State) getCopy() State {
@@ -82,37 +83,37 @@ func (state State) getCopy() State {
 /* -------- Ballot -------- */
 
 type Ballot struct {
-	n int
-	v ledger.Op
+	N int
+	V ledger.Op
 }
 
 // Returns two bools: b1 > b2 and b1 ~ b2
 func compareBallots(b1, b2 Ballot) (greater, compatible bool) {
-	if b1.n == 0 && b2.n == 0 {
+	if b1.N == 0 && b2.N == 0 {
 		greater = false
 		compatible = true
 		return
 	}
 
-	if b1.n == 0 {
+	if b1.N == 0 {
 		greater = false
 		compatible = true
 		return
 	}
 
-	if b2.n == 0 {
+	if b2.N == 0 {
 		greater = true
 		compatible = true
 		return
 	}
 
-	greater = (b1.n > b2.n)
-	compatible = (b1.v == b2.v)
+	greater = (b1.N > b2.N)
+	compatible = (b1.V == b2.V)
 	return
 }
 
 func areBallotsEqual(b1, b2 Ballot) bool {
-	sameN := (b2.n == b2.n)
+	sameN := (b2.N == b2.N)
 	_, compatible := compareBallots(b1, b2)
 	return (sameN && compatible)
 }
@@ -142,9 +143,9 @@ func (scp *ScpNode) Start(seq int, v ledger.Op) {
 
 	// Create initial state
 	// Allocate this slot if needed
-	scp.checkSlotAllocation(seq)
-	state := scp.slots[seq].states[scp.me]
-	state.b = Ballot{1, v}
+	slot := scp.getSlot(seq)
+	state := slot.states[scp.me]
+	state.B = Ballot{1, v}
 
 	// Propose every timeout. Maybe 100ms is too much.
 	// TODO: Check if a randomized interval is necessary
@@ -166,9 +167,9 @@ func (scp *ScpNode) propose(seq int, v ledger.Op) {
 
 	// Timeout! Update b if we are still looking for consensus
 	myState := scp.slots[seq].states[scp.me]
-	if myState.phi != EXTERNALIZE {
+	if myState.Phi != EXTERNALIZE {
 		scp.DPrintf("Proposing new ballot")
-		myState.b.n += 1
+		myState.B.N += 1
 		scp.broadcastMessage(seq)
 	}
 }
@@ -176,10 +177,11 @@ func (scp *ScpNode) propose(seq int, v ledger.Op) {
 // Returns: true if a consensus was reached on seq, with it's value
 // false otherwise
 func (scp *ScpNode) Status(seq int) (bool, ledger.Op) {
-	myState := scp.slots[seq].states[scp.me]
+	slot := scp.getSlot(seq)
+	myState := slot.states[scp.me]
 
-	if myState.phi == EXTERNALIZE {
-		return true, myState.b.v
+	if myState.Phi == EXTERNALIZE {
+		return true, myState.B.V
 	}
 	return false, ledger.Op{}
 }
@@ -195,8 +197,7 @@ func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessa
 	scp.DPrintf("RPC handling ProcessMessage: args=%+v", args)
 
 	// Allocate this slot if needed
-	scp.checkSlotAllocation(args.Seq)
-	slot := scp.slots[args.Seq]
+	slot := scp.getSlot(args.Seq)
 
 	// Update peer's state
 	// TODO: Check if this is the most recent message
@@ -266,19 +267,20 @@ func (scp *ScpNode) step0(seq int) {
 	slot := scp.slots[seq]
 	myState := slot.states[scp.me]
 
+
 	scp.DPrintf("step0(seq=%d), state=%+v", seq, myState)
 
-	if myState.phi == EXTERNALIZE {
+	if myState.Phi == EXTERNALIZE {
 		scp.DPrintf("Doesn't meet step 0 requirements")
 		return
 	}
 
 	for _, state := range slot.states {
-		greaterThanB, _ := compareBallots(state.b, myState.b)
-		_, compatibleWithC := compareBallots(state.b, myState.c)
+		greaterThanB, _ := compareBallots(state.B, myState.B)
+		_, compatibleWithC := compareBallots(state.B, myState.C)
 
 		if greaterThanB && compatibleWithC {
-			myState.b = state.b
+			myState.B = state.B
 		}
 	}
 }
@@ -290,46 +292,46 @@ func (scp *ScpNode) step1(seq int) {
 	scp.DPrintf("step1(seq=%d), state=%+v", seq, myState)
 
 	// Conditions: phi = PREPARE and b > p > c
-	if myState.phi != PREPARE {
+	if myState.Phi != PREPARE {
 		scp.DPrintf("Doesn't meet step 1 requirements")
 		return
 	}
 
-	if greater, _ := compareBallots(myState.b, myState.p); !greater {
+	if greater, _ := compareBallots(myState.B, myState.P); !greater {
 		scp.DPrintf("Doesn't meet step 1 requirements")
 		return
 	}
 
-	if greater, _ := compareBallots(myState.p, myState.c); !greater {
+	if greater, _ := compareBallots(myState.P, myState.C); !greater {
 		scp.DPrintf("Doesn't meet step 1 requirements")
 		return
 	}
 
 	// To accept prepare b, we need a quorum voting/accepting prepare b
-	// Hence we need a quorum with b = myState.b or p = myState.b or pOld = myState.b
+	// Hence we need a quorum with b = myState.B or p = myState.B or pOld = myState.B
 	isValidB := func(peerState State) bool {
-		return areBallotsEqual(peerState.b, myState.b)
+		return areBallotsEqual(peerState.B, myState.B)
 	}
 
 	isValidP := func(peerState State) bool {
-		return areBallotsEqual(peerState.p, myState.b)
+		return areBallotsEqual(peerState.P, myState.B)
 	}
 
 	isValidPOld := func(peerState State) bool {
-		return areBallotsEqual(peerState.pOld, myState.b)
+		return areBallotsEqual(peerState.POld, myState.B)
 	}
 
 	if scp.hasQuorum(seq, isValidB) || scp.hasQuorum(seq, isValidP) || scp.hasQuorum(seq, isValidPOld) {
 		scp.DPrintf("step1(seq=%d): updating p! Found quorum voting/accepting prepare b", seq)
-		scp.updatePs(seq, myState.b)
+		scp.updatePs(seq, myState.B)
 		return
 	}
 
 	// Or we need a v-blocking accepting prepare b
-	// Hence we need a v-blocking with p = myState.b or pOld = myState.b
+	// Hence we need a v-blocking with p = myState.B or pOld = myState.B
 	if scp.hasVBlocking(seq, isValidP) || scp.hasVBlocking(seq, isValidPOld) {
 		scp.DPrintf("step1(seq=%d): updating p! Found vblocking accepting prepare b", seq)
-		scp.updatePs(seq, myState.b)
+		scp.updatePs(seq, myState.B)
 		return
 	}
 }
@@ -338,16 +340,16 @@ func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 	myState := scp.slots[seq].states[scp.me]
 
 	// Only update pOld if necessary
-	if _, compatible := compareBallots(newP, myState.p); compatible {
-		myState.pOld = myState.p
+	if _, compatible := compareBallots(newP, myState.P); compatible {
+		myState.POld = myState.P
 	}
-	myState.p = newP
+	myState.P = newP
 
 	// Ensure the invariant p ~ c
-	if _, compatible := compareBallots(myState.p, myState.c); !compatible {
+	if _, compatible := compareBallots(myState.P, myState.C); !compatible {
 		// This means that we went from voting to commit c to accept (abort c)
 		// by setting c = 0, which is valid in FBA voting
-		myState.c = Ballot{}
+		myState.C = Ballot{}
 	}
 }
 
@@ -358,35 +360,35 @@ func (scp *ScpNode) step2(seq int) {
 	scp.DPrintf("step2(seq=%d), state=%+v", seq, myState)
 
 	// Conditions: phi = PREPARE, b = p, b != c
-	if myState.phi != PREPARE {
+	if myState.Phi != PREPARE {
 		scp.DPrintf("Doesn't meet step 2 requirements")
 		return
 	}
 
-	if !areBallotsEqual(myState.b, myState.p) {
+	if !areBallotsEqual(myState.B, myState.P) {
 		scp.DPrintf("Doesn't meet step 2 requirements")
 		return
 	}
 
-	if areBallotsEqual(myState.b, myState.c) {
+	if areBallotsEqual(myState.B, myState.C) {
 		scp.DPrintf("Doesn't meet step 2 requirements")
 		return
 	}
 
 	// To vote on commit c, we need to confirm prepare b,
 	// so we need a quorum accepting prepare b
-	// Hence we need a quorum with p = myState.b(= myState.p) or pOld = myState.b(= myState.p)
+	// Hence we need a quorum with p = myState.B(= myState.P) or pOld = myState.B(= myState.P)
 	isValidP := func(peerState State) bool {
-		return areBallotsEqual(peerState.p, myState.b)
+		return areBallotsEqual(peerState.P, myState.B)
 	}
 
 	isValidPOld := func(peerState State) bool {
-		return areBallotsEqual(peerState.pOld, myState.b)
+		return areBallotsEqual(peerState.POld, myState.B)
 	}
 
 	if scp.hasQuorum(seq, isValidP) || scp.hasQuorum(seq, isValidPOld) {
 		scp.DPrintf("step2(seq=%d): updating c! Found quorum of accepting prepare b(= p)", seq)
-		myState.c = myState.b
+		myState.C = myState.B
 		return
 	}
 }
@@ -398,7 +400,7 @@ func (scp *ScpNode) step3(seq int) {
 	scp.DPrintf("step3(seq=%d), state=%+v", seq, myState)
 
 	// Conditions: b = p = c
-	if !(areBallotsEqual(myState.b, myState.p) && areBallotsEqual(myState.p, myState.c)) {
+	if !(areBallotsEqual(myState.B, myState.P) && areBallotsEqual(myState.P, myState.C)) {
 		scp.DPrintf("Doesn't meet step 3 requirements")
 		return
 	}
@@ -406,11 +408,11 @@ func (scp *ScpNode) step3(seq int) {
 	// To accept commit c, we need a quorum voting/accepting commit c
 	// Hence we need a quorum with our c
 	isValid := func(peerState State) bool {
-		return areBallotsEqual(peerState.c, myState.c)
+		return areBallotsEqual(peerState.C, myState.C)
 	}
 
 	if scp.hasQuorum(seq, isValid) {
-		myState.phi = FINISH
+		myState.Phi = FINISH
 		scp.DPrintf("step3(seq=%d): setting phi=FINISH! Found quorum voting/accepting commit c(= b = p)", seq)
 		return
 	}
@@ -418,11 +420,11 @@ func (scp *ScpNode) step3(seq int) {
 	// Or we need a v-blocking accepting commit c
 	// Hence we need a v-blocking with our c and phi = FINISH
 	isValid = func(peerState State) bool {
-		return areBallotsEqual(peerState.c, myState.c) && (peerState.phi == FINISH)
+		return areBallotsEqual(peerState.C, myState.C) && (peerState.Phi == FINISH)
 	}
 
 	if scp.hasVBlocking(seq, isValid) {
-		myState.phi = FINISH
+		myState.Phi = FINISH
 		scp.DPrintf("step3(seq=%d): setting phi=FINISH! Found vblocking accepting commit c(= b = p)", seq)
 		return
 	}
@@ -435,7 +437,7 @@ func (scp *ScpNode) step4(seq int) {
 	scp.DPrintf("step4(seq=%d), state=%+v", seq, myState)
 
 	// Conditions : phi = FINISH
-	if myState.phi != FINISH {
+	if myState.Phi != FINISH {
 		scp.DPrintf("Doesn't meet step 4 requirements")
 		return
 	}
@@ -443,11 +445,11 @@ func (scp *ScpNode) step4(seq int) {
 	// To confirm commit c, we need a quorum accepting commit c
 	// Hence we need a quorum with our c and phi = FINISH
 	isValid := func(peerState State) bool {
-		return areBallotsEqual(peerState.c, myState.c) && (peerState.phi == FINISH)
+		return areBallotsEqual(peerState.C, myState.C) && (peerState.Phi == FINISH)
 	}
 
 	if scp.hasQuorum(seq, isValid) {
-		myState.phi = EXTERNALIZE
+		myState.Phi = EXTERNALIZE
 		scp.DPrintf("step3(seq=%d): setting phi=EXTERNALIZE! Found quorum accepting commit c(= b = p)", seq)
 		return
 	}
@@ -505,13 +507,12 @@ func (scp *ScpNode) isSliceBlocked(seq int, slice QuorumSlice, isValid func(Stat
 // form the fault-tolerant Account/value service.
 // me is the index of the current server in servers[].
 //
-func StartServer(servers []string, me int, peers map[int]string, peerSlices map[int][]QuorumSlice) *ScpNode {
-	// call gob.Register on structures you want
-	// Go's RPC library to marshall/unmarshall.
-	// gob.Register(Op{})
+func StartServer(servers []string, me int, peerSlices map[int][][]int) *ScpNode {
+	gob.Register(ledger.Op{})
+	gob.Register(State{})
 
 	scp := new(ScpNode)
-	scp.init(me, peers, peerSlices)
+	scp.init(me, servers, peerSlices)
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(scp)
@@ -547,7 +548,7 @@ func StartServer(servers []string, me int, peers map[int]string, peerSlices map[
 			}
 			if err != nil && scp.isdead() == false {
 				scp.DPrintf("accept: %v", err.Error())
-				scp.kill()
+				scp.Kill()
 			}
 		}
 	}()
@@ -555,25 +556,25 @@ func StartServer(servers []string, me int, peers map[int]string, peerSlices map[
 	return scp
 }
 
-func (scp *ScpNode) init(id int, peers map[int]string, peerSlices map[int][]QuorumSlice) {
+func (scp *ScpNode) init(id int, servers []string, peerSlices map[int][][]int) {
 	scp.me = id
 
 	scp.peers = make(map[int]string)
-	for nodeId, add := range peers {
-		scp.peers[nodeId] = add
+	for nodeId, server := range servers {
+		scp.peers[nodeId] = server
 	}
 
 	scp.peerSlices = make(map[int][]QuorumSlice)
 	for nodeId, nodeSlices := range peerSlices {
 		scp.peerSlices[nodeId] = make([]QuorumSlice, len(nodeSlices))
 		for i, nodeSlice := range nodeSlices {
-			scp.peerSlices[nodeId][i] = nodeSlice
+			scp.peerSlices[nodeId][i] = QuorumSlice(nodeSlice)
 		}
 	}
 
 	scp.slots = make(map[int]*Slot)
 
-	scp.quorums = findQuorums(peerSlices)
+	scp.quorums = findQuorums(scp.peerSlices)
 	// Store only the quorums which contain myself
 	for i, quorum := range scp.quorums {
 
@@ -591,13 +592,19 @@ func (scp *ScpNode) init(id int, peers map[int]string, peerSlices map[int][]Quor
 	}
 }
 
-func (scp *ScpNode) checkSlotAllocation(seq int) {
+func (scp *ScpNode) getSlot(seq int) (slot *Slot) {
 	if _, ok := scp.slots[seq]; !ok {
 		scp.DPrintf("checkSlotAllocation(seq=%d): allocating new slot", seq)
 		newSlot := Slot{}
 		newSlot.states = make(map[int]*State)
+
+		state := State{}
+		state.Phi = PREPARE
+		
+		newSlot.states[scp.me] = &state
 		scp.slots[seq] = &newSlot
 	}
+	return scp.slots[seq]
 }
 
 /* ----- Util ----- */
@@ -639,7 +646,7 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 }
 
 // tell the server to shut itself down.
-func (scp *ScpNode) kill() {
+func (scp *ScpNode) Kill() {
 	// DPrintf("Kill(%d): die\n", scp.me)
 	atomic.StoreInt32(&scp.dead, 1)
 	scp.l.Close()
