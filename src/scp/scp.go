@@ -8,10 +8,31 @@ import "sync"
 import "sync/atomic"
 import "os"
 import "syscall"
+
 // import "encoding/gob"
 import "math/rand"
 import "time"
 import "ledger"
+
+/* -------- Node -------- */
+
+type ScpNode struct {
+	mu         sync.Mutex
+	l          net.Listener
+	dead       int32 // for testing
+	unreliable int32 // for testing
+
+	me           int // This node's id
+	quorumSlices []QuorumSlice
+
+	peers      map[int]string // All the peers discovered so far
+	peerSlices map[int][]QuorumSlice
+
+	slots   map[int]*Slot // SCP runs in a Slot
+	quorums []Quorum
+}
+
+/* -------- Phase -------- */
 
 type Phase int
 
@@ -26,26 +47,7 @@ const (
 type QuorumSlice []int // nodes ids
 type Quorum []int      // nodes ids
 
-
-/* -------- Node -------- */
-
-type ScpNode struct {
-	mu sync.Mutex
-	l  net.Listener
-	dead       int32 // for testing
-	unreliable int32 // for testing
-
-	me           int // This node's id
-	quorumSlices []QuorumSlice
-
-	peers       map[int]string // All the peers discovered so far
-	peerSlices map[int][]QuorumSlice
-
-	slots   map[int]*Slot // SCP runs in a Slot
-	quorums []Quorum
-}
-
-/* -------- State -------- */
+/* -------- Slot -------- */
 
 // Holds every nodes' state, including itself
 type Slot struct {
@@ -132,11 +134,14 @@ func (scp *ScpNode) Start(seq int, v ledger.Op) {
 	state := scp.slots[seq].states[scp.me]
 	state.b = Ballot{1, v}
 
-	// Propose every timeout
-	// Maybe 100ms is too much
+	// Propose every timeout. Maybe 100ms is too much.
+	// TODO: Check if a randomized interval is necessary
+	// TODO: Tick until externalized, not dead
 	go func() {
-		scp.propose(seq, v)
-		time.Sleep(100 * time.Millisecond)
+		for !scp.isdead() {
+			scp.propose(seq, v)
+			time.Sleep(100 * time.Millisecond)
+		}
 	}()
 }
 
@@ -579,7 +584,6 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	fmt.Println(err)
 	return false
 }
-
 
 // tell the server to shut itself down.
 func (scp *ScpNode) kill() {
