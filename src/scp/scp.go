@@ -163,100 +163,6 @@ func (scp *ScpNode) broadcastMessage(message) {
 
 }
 
-// -------- Quorum -------- //
-
-// field: b, p, pOld or c
-// Check every quorum for a minCompatible ballot (candidate), and returns the best of these (the max)
-// If not found, found = false
-func (scp *ScpNode) checkQuorums(seq int, field string) (Ballot, bool) {
-	slot := scp.slots[seq]
-	bestCandidate := Ballot{} // the max of all the minCompatible ballots
-	found := false
-
-	for _, quorum := range scp.quorums {
-		if minBallot, ok := scp.minCompatible(quorum, field); ok {
-			if greater, compatible := compareBallots(minBallot, bestCandidate); greater {
-				bestCandidate = minBallot
-				found = true
-			}
-		}
-	}
-
-	return bestCandidate, found
-}
-
-// field: p or pOld
-// Check every v-blocking for a minCompatible ballot
-// If found, return ballot, true
-// else, return 0-ballot, false
-func (scp *ScpNode) checkVBlockings(seq int, field string) (Ballot, bool) {
-	slot := scp.slots[seq]
-
-	// Here I break the abstraction of Ballots having ledger.Op's in order to index ballots by their values.
-	// This map is of the form {ledger.Op -> {sliceId -> ballotId}}, or {v: {i: n}}
-	invIndex := make(map[ledger.Op]map[int]int)
-
-	for _, slice := range scp.peerSlices[scp.me] {
-		for i, nodeID := range slice {
-			nodeBallot := scp.states[nodeID].getBallot(field)
-
-			_, ok := invIndex[nodeBallot.v]
-			if !ok {
-				invIndex[nodeBallot.v] = make(map[int]int)
-				invIndex[nodeBallot.v][i] = nodeBallot.n
-			} else {
-				invIndex[nodeBallot.v][i] = min(nodeBallot.n, invIndex[nodeBallot.v][i])
-			}
-		}
-	}
-
-	// Finding the best candidate, as in scp.checkQuorums
-	bestCandidate := Ballot{}
-	found := false
-
-	for v, m := range {
-		if len(m) == len(scp.peerSlices[scp.me]) {
-
-			minBallot := Ballot{}
-			for i, n := range m {
-				if n < minBallot.n || minBallot.n == 0 {
-					minBallot.n = n
-					minBallot.v = v
-				}
-			}
-
-			if minBallot.n > bestCandidate.n {
-				bestCandidate = minBallot
-				found = true
-			}
-		}
-	}
-
-	return bestCandidate, found
-}
-
-// If each node on the quorum has a compatible field
-// ifreturns the minimum ballot of these
-// else returns a 0-ballot and false
-// field: b, p, pOld or c
-func (scp *ScpNode) minCompatible(seq int, quorum Quorum, field string) (Ballot, bool) {
-	slot := scp.slots[seq]
-	minBallot := Ballot{}
-
-	for _, nodeID := range quorum {
-		nodeBallot := scp.states[nodeID].getBallot(field)
-		greater, compatible := compareBallots(minBallot, nodeBallot)
-		if !compatible {
-			return Ballot{}, false
-		}
-		if greater {
-			minBallot = nodeBallot
-		}
-	}
-
-	return minBallot, true
-}
-
 // -------- State -------- //
 
 // Tries to update it's state, given the information in M
@@ -361,7 +267,7 @@ func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 
 // Try to update c
 // Node confirms b(= p) is prepared: a quorum of accepts that b is prepared
-func (scp *ScpNode) step2() {
+func (scp *ScpNode) step2(seq int) {
 	slot := scp.slots[seq]
 
 	// Conditions: phi = PREPARE, b = p, b != c
@@ -404,4 +310,148 @@ func (scp *ScpNode) step3() {
 
 func (scp *ScpNode) step4() {
 
+}
+
+// -------- Helper Functions -------- //
+
+
+// --- State 2 helpers --- //
+
+// field: b, p, pOld or c
+// Check every quorum for a minCompatible ballot (candidate), and returns the best of these (the max)
+// If not found, found = false
+func (scp *ScpNode) checkQuorums(seq int, field string) (Ballot, bool) {
+	slot := scp.slots[seq]
+	bestCandidate := Ballot{} // the max of all the minCompatible ballots
+	found := false
+
+	for _, quorum := range scp.quorums {
+		if minBallot, ok := scp.minCompatible(quorum, field); ok {
+			if greater, compatible := compareBallots(minBallot, bestCandidate); greater {
+				bestCandidate = minBallot
+				found = true
+			}
+		}
+	}
+
+	return bestCandidate, found
+}
+
+// field: p or pOld
+// Check every v-blocking for a minCompatible ballot
+// If found, return ballot, true
+// else, return 0-ballot, false
+func (scp *ScpNode) checkVBlockings(seq int, field string) (Ballot, bool) {
+	slot := scp.slots[seq]
+
+	// Here I break the abstraction of Ballots having ledger.Op's in order to index ballots by their values.
+	// This map is of the form {ledger.Op -> {sliceId -> ballotId}}, or {v: {i: n}}
+	invIndex := make(map[ledger.Op]map[int]int)
+
+	for _, slice := range scp.peerSlices[scp.me] {
+		for i, nodeID := range slice {
+			nodeBallot := scp.states[nodeID].getBallot(field)
+
+			_, ok := invIndex[nodeBallot.v]
+			if !ok {
+				invIndex[nodeBallot.v] = make(map[int]int)
+				invIndex[nodeBallot.v][i] = nodeBallot.n
+			} else {
+				invIndex[nodeBallot.v][i] = min(nodeBallot.n, invIndex[nodeBallot.v][i])
+			}
+		}
+	}
+
+	// Finding the best candidate, as in scp.checkQuorums
+	bestCandidate := Ballot{}
+	found := false
+
+	for v, m := range {
+		if len(m) != len(scp.peerSlices[scp.me]) {
+			continue
+		}
+
+		minBallot := Ballot{}
+		for i, n := range m {
+			if n < minBallot.n || minBallot.n == 0 {
+				minBallot.n = n
+				minBallot.v = v
+			}
+		}
+
+		if minBallot.n > bestCandidate.n {
+			bestCandidate = minBallot
+			found = true
+		}
+	}
+
+	return bestCandidate, found
+}
+
+// If each node on the quorum has a compatible field
+// ifreturns the minimum ballot of these
+// else returns a 0-ballot and false
+// field: b, p, pOld or c
+func (scp *ScpNode) minCompatible(seq int, quorum Quorum, field string) (Ballot, bool) {
+	slot := scp.slots[seq]
+	minBallot := Ballot{}
+
+	for _, nodeID := range quorum {
+		nodeBallot := scp.states[nodeID].getBallot(field)
+		greater, compatible := compareBallots(minBallot, nodeBallot)
+		if !compatible {
+			return Ballot{}, false
+		}
+		if greater {
+			minBallot = nodeBallot
+		}
+	}
+
+	return minBallot, true
+}
+
+// --- State 3 helpers --- //
+
+// Check if every node in a quorum has the same value of c
+// If found, return (ballot, true)
+// else, return (0-ballot, false)
+func (scp *ScpNode) hasQuorum(seq int) bool {
+	slot := scp.slots[seq]
+
+	for _, quorum := range scp.quorums {
+
+		allSame := true
+		for _, nodeID := range quorum {
+			if slot.c != scp.states[nodeID].getBallot("c") {
+				allSame = falses
+			}
+		}
+
+		if allSame == true {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (scp *ScpNode) hasVBlocking(seq int) bool {
+	slot := scp.slots[seq]
+
+	for _, slice := range scp.peerSlices[scp.me] {
+
+		oneSame := false
+		for _, nodeID := range slice {
+			if slot.c == scp.states[nodeID].getBallot("c") {
+				oneSame = true
+				break
+			}
+		}
+
+		if oneSame == false {
+			return false
+		}
+	}
+
+	return true
 }
