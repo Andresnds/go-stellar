@@ -468,46 +468,44 @@ func (scp *ScpNode) minCompatible(seq int, quorum Quorum, field string) (Ballot,
 
 // --- Step 3 helpers --- //
 
-// Check if every node in a quorum has the same value of c
-// If found, return (ballot, true)
-// else, return (0-ballot, false)
-func (scp *ScpNode) hasQuorum(seq int) bool {
-	slot := scp.slots[seq]
-
+// Returns true if there is a quorum that satisfies the validator isValid
+func (scp *ScpNode) hasQuorum(isValid func(state State) bool) bool {
 	for _, quorum := range scp.quorums {
-
-		allSame := true
-		for _, nodeID := range quorum {
-			if slot.c != scp.states[nodeID].getBallot("c") {
-				allSame = falses
-			}
-		}
-
-		if allSame == true {
+		if isQuorumValid(quorum, isValid) {
 			return true
 		}
 	}
-
 	return false
 }
 
-func (scp *ScpNode) hasVBlocking(seq int) bool {
-	slot := scp.slots[seq]
-
-	for _, slice := range scp.peerSlices[scp.me] {
-
-		oneSame := false
-		for _, nodeID := range slice {
-			if slot.c == scp.states[nodeID].getBallot("c") {
-				oneSame = true
-				break
-			}
-		}
-
-		if oneSame == false {
+// Checks if all quorum members satisfy the validator isValid
+func isQuorumValid(quorum Quorum, isValid func(state State) bool) bool {
+	for _, nodeID := range quorum {
+		state := scp.states[nodeId]
+		if !isValid(state) {
 			return false
 		}
 	}
-
 	return true
+}
+
+// Returns true if there all of it's slices are blocked
+func (scp *ScpNode) hasVBlocking(isValid func(state State) bool) bool {
+	for _, slice := range scp.peerSlices[scp.me] {
+		if !isSliceBlocked(slice, isValid) {
+			return false
+		}
+	}
+	return true
+}
+
+// A slice is blocked if any of it's elements satisfies the validator
+func isSliceBlocked(slice Slice, isValid func(state State) bool) bool {
+	for _, nodeID := range slice {
+		state = scp.states[nodeID]
+		if isValid(state) {
+			return true
+		}
+	}
+	return false
 }
