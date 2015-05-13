@@ -15,31 +15,21 @@ type Quorum []int // nodes ids
 type ScpNode struct {
 	mu    sync.Mutex
 	l     net.Listener
-	id    int
+
+	me int // This node's id
+	quorumSlices []QuorumSlice
 
 	peers map[int]string // All the peers discovered so far
-	peerSlices map[int][]QuorumSlice
+	peersSlices map[int][]QuorumSlice
 
 	slots map[int]*Slot // SCP runs in a Slot
-	quorums []Quorum
 }
 
 /* -------- State -------- */
 
+// Holds every nodes' state, including itself
 type Slot struct {
-	// Slot state
-	b        Ballot
-	p        Ballot
-	pOld     Ballot
-	c        Ballot
-	phi      Phase
-
-	// Every other node's state
 	states map[int]*State 
-}
-
-func (slot *Slot) toState() State {
-	return State{slot.b, slot.p, slot.pOld, slot.c, slot.phi}
 }
 
 /* -------- State -------- */
@@ -50,16 +40,6 @@ type State struct {
 	pOld Ballot
 	c    Ballot
 	phi  Phase
-}
-
-// Translates field string into ballot from state
-func (state *State) getBallot(field string) {
-	switch field {
-		case "b": return state.b
-		case "p": return state.p
-		case "pOld": return state.pOld
-		case "c": return state.c
-	}
 }
 
 /* -------- Ballot -------- */
@@ -114,7 +94,7 @@ func min(a, b int) int {
 	return b
 }
 
-/* -------- Init -------- */
+/* -------- Initialization -------- */
 
 func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]QuorumSlice) {
 	scp.id = id
@@ -132,21 +112,33 @@ func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]Quor
 		}
 	}
 
-	scp.quorums = findQuorums(scp.peerSlices)
-	// Store only the quorums which contain myself
-	for i, quorum := range scp.quorums {
+	scp.slots = make(map[int]*Slot)
 
-		contained := false
-		for _, v := quorum {
-			if v == scp.me {
-				contained = true
-				break
-			}
-		}
+	// TODO: Initialize l and listen to network
+}
 
-		if !contained {
-			scp.quorums = append(scp.quorums[:i], scp.quorums[i+1:]...) // removing i'th element
-		}
+// ------- RPC HANDLERS ------- //
+
+// Reads and process the message from other scp nodes
+func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessageReply) error {
+	// Locked
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	// Allocate this slot if needed
+	scp.checkSlotAllocation(args.Seq)
+	slot := scp.slots[args.Seq]
+
+	// Update peer's state
+	// TODO: Check if this is the most recent message
+	slot.states[args.ID] = &args.State
+
+	// Run the SCP steps to update this slot's state
+	updated := scp.tryToUpdateState(args.Seq)
+
+	// Broadcast message to peers if needed
+	if updated {
+		scp.broadcastMessage(args.Seq)
 	}
 }
 
@@ -154,30 +146,20 @@ func (scp *ScpNode) ExchangeQSlices(args *ExchangeQSlicesArgs, reply *ExchangeQS
 	// TODO: :P
 }
 
-// ------- RPC HANDLERS ------- //
-
-// Reads and process the message from other scp nodes
-func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessageReply) error {
-
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-
-	slot := scp.slots[args.Seq]
-	slot.states[args.ID] = args.State // maybe checking if message is the most updated one... ?
-
-	scp.tryToUpdateState(args.Seq)
-
-	if slot.states[args.ID] != slot {
-		scp.broadcastMessage(args.Seq)
+func (scp *ScpNode) checkSlotAllocation(seq int) {
+	if _, ok := scp.slots[seq]; !ok {
+		newSlot := Slot{}
+		newSlot.states = make(map[int]*State)
+		scp.slots[seq] = &newSlot
 	}
 }
 
 // Broadcast message to other scp nodes
 func (scp *ScpNode) broadcastMessage(seq int) {
-	slot := scp.slots[args.Seq]
-	args := &Args{seq, scp.me, slot.toState()}
+	state := scp.slots[args.Seq].state[scp.me]
 
 	for id, s := range scp.peers {
+		args := &ProcessMessageArgs{seq, scp.me, state.getCopy()}
 		var reply ProcessMessageReply
 		call(s, "ScpNode.ProcessMessage", args, &reply)
 	}
@@ -219,22 +201,32 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	return false
 }
 
-// -------- State -------- //
+// -------- State update -------- //
 
 // Tries to update it's state, given the information in M
 // Returns: bool stating if updated or not
-// XXX Why on stellar they broadcast for every step?
 func (scp *ScpNode) tryToUpdateState(seq int) bool {
 	slot := scp.slots[seq]
 
+	// State before
+	stateBefore := slot.toState()
+
+	// Apply the SCP steps
 	step0(seq)
 	step1(seq)
 	step2(seq)
 	step3(seq)
 	step4(seq)
+
+	// Check if there was any update at all
+	if stateBefore != slot.toState() {
+		return true
+	}
+	return false
 }
 
 // Try to update b
+// TODO: Not change when phi = EXTERNALIZE?
 func (scp *ScpNode) step0(seq int) {
 	slot := scp.slots[seq]
 
@@ -397,104 +389,6 @@ func (scp *ScpNode) step4(seq int) {
 }
 
 // -------- Helper Functions -------- //
-
-
-// --- Step 2 helpers --- //
-
-// field: b, p, pOld or c
-// Check every quorum for a minCompatible ballot (candidate), and returns the best of these (the max)
-// If not found, found = false
-func (scp *ScpNode) checkQuorums(seq int, field string) (Ballot, bool) {
-	slot := scp.slots[seq]
-	bestCandidate := Ballot{} // the max of all the minCompatible ballots
-	found := false
-
-	for _, quorum := range scp.quorums {
-		if minBallot, ok := scp.minCompatible(quorum, field); ok {
-			if greater, compatible := compareBallots(minBallot, bestCandidate); greater {
-				bestCandidate = minBallot
-				found = true
-			}
-		}
-	}
-
-	return bestCandidate, found
-}
-
-// field: p or pOld
-// Check every v-blocking for a minCompatible ballot
-// If found, return ballot, true
-// else, return 0-ballot, false
-func (scp *ScpNode) checkVBlockings(seq int, field string) (Ballot, bool) {
-	slot := scp.slots[seq]
-
-	// Here I break the abstraction of Ballots having ledger.Op's in order to index ballots by their values.
-	// This map is of the form {ledger.Op -> {sliceId -> ballotId}}, or {v: {i: n}}
-	invIndex := make(map[ledger.Op]map[int]int)
-
-	for _, slice := range scp.peerSlices[scp.me] {
-		for i, nodeID := range slice {
-			nodeBallot := scp.states[nodeID].getBallot(field)
-
-			_, ok := invIndex[nodeBallot.v]
-			if !ok {
-				invIndex[nodeBallot.v] = make(map[int]int)
-				invIndex[nodeBallot.v][i] = nodeBallot.n
-			} else {
-				invIndex[nodeBallot.v][i] = min(nodeBallot.n, invIndex[nodeBallot.v][i])
-			}
-		}
-	}
-
-	// Finding the best candidate, as in scp.checkQuorums
-	bestCandidate := Ballot{}
-	found := false
-
-	for v, m := range {
-		if len(m) != len(scp.peerSlices[scp.me]) {
-			continue
-		}
-
-		minBallot := Ballot{}
-		for i, n := range m {
-			if n < minBallot.n || minBallot.n == 0 {
-				minBallot.n = n
-				minBallot.v = v
-			}
-		}
-
-		if minBallot.n > bestCandidate.n {
-			bestCandidate = minBallot
-			found = true
-		}
-	}
-
-	return bestCandidate, found
-}
-
-// If each node on the quorum has a compatible field
-// ifreturns the minimum ballot of these
-// else returns a 0-ballot and false
-// field: b, p, pOld or c
-func (scp *ScpNode) minCompatible(seq int, quorum Quorum, field string) (Ballot, bool) {
-	slot := scp.slots[seq]
-	minBallot := Ballot{}
-
-	for _, nodeID := range quorum {
-		nodeBallot := scp.states[nodeID].getBallot(field)
-		greater, compatible := compareBallots(minBallot, nodeBallot)
-		if !compatible {
-			return Ballot{}, false
-		}
-		if greater {
-			minBallot = nodeBallot
-		}
-	}
-
-	return minBallot, true
-}
-
-// --- Step 3 helpers --- //
 
 // Returns true if there is a quorum that satisfies the validator isValid
 func (scp *ScpNode) hasQuorum(isValid func(state State) bool) bool {
