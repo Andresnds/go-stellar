@@ -33,8 +33,10 @@ type Slot struct {
 	phi      Phase
 
 	// Every other node's state
-	states map[int]State 
+	states map[int]*State 
 }
+
+/* -------- State -------- */
 
 type State struct {
 	b    Ballot
@@ -42,6 +44,16 @@ type State struct {
 	pOld Ballot
 	c    Ballot
 	phi  Phase
+}
+
+// Translates field string into ballot from state
+func (state *State) getBallot(field string) {
+	switch field {
+		case "b": return state.b
+		case "p": return state.p
+		case "pOld": return state.pOld
+		case "c": return state.c
+	}
 }
 
 /* -------- Ballot -------- */
@@ -98,7 +110,7 @@ func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]Quor
 }
 
 func (scp *ScpNode) ExchangeQSlices(args *ExchangeQSlicesArgs, reply *ExchangeQSlicesReply) {
-	// TO-DO: :P
+	// TODO: :P
 }
 
 // ------- RPC HANDLERS ------- //
@@ -133,39 +145,70 @@ func (scp *ScpNode) broadcastMessage(message) {
 
 // -------- Quorum -------- //
 
-func (scp *ScpNode) checkQuorums(field string) (Ballot, bool) {
+// field: b, p, pOld or c
+// Check every quorum for a minCompatible ballot
+// If found, return ballot, true
+// else, return 0-ballot, false
+func (scp *ScpNode) checkQuorums(seq int, field string) (Ballot, bool) {
 	slot := scp.slots[seq]
 
-	for quorum := range scp.quorums {
-		if minBallot, ok := scp.minCompatible(quorum, field); ok {
-			if greater, compatible := compareBallots(minBallot, slot.p); greater {
-				return minBallot, true
+	minBallot := Ballot{}
+	flag := false
 
-				// Update p and pOld
-				if !compatible {
-					slot.pOld = slot.p
-				}
-				slot.p = minBallot
-				return true
+	for _, quorum := range scp.quorums {
+		if qBallot, ok := scp.minCompatible(quorum, field); ok {
+			if greater, compatible := compareBallots(minBallot, qBallot); greater {
+				minBallot = qBallot
+				flag = true
 			}
 		}
 	}
-	return Ballot{}, false
+
+	return minBallot, flag
 }
 
-// If each node on the quorum has a compatible field, returns the minimum ballot of these
-// else returns a 0-ballot and false
-// field: b, p, pOld or c
-func (scp *ScpNode) minCompatible(quorum Quorum, field string) (Ballot, bool) {
-}
+// field: p or pOld
+// Check every v-blocking for a minCompatible ballot
+// If found, return ballot, true
+// else, return 0-ballot, false
+func (scp *ScpNode) checkVBlockings(seq int, field string) (Ballot, bool) {
+	slot := scp.slots[seq]
 
-// If there each node on the quorum has a compatible field, returns the minimum ballot of these
-// else returns a 0-ballot and false
-// field: b, p, pOld or c
-func (scp *ScpNode) getMinCompatible(field string) (Ballot, bool) {
-	for _, node := range scp.quorum {
+	minBallot := Ballot{}
+	flag := false
 
+	for _, quorum := range scp.quorums {
+		if qBallot, ok := scp.minCompatible(quorum, field); ok {
+			if greater, compatible := compareBallots(minBallot, qBallot); greater {
+				minBallot = qBallot
+				flag = true
+			}
+		}
 	}
+
+	return minBallot, flag
+}
+
+// If each node on the quorum has a compatible field
+// ifreturns the minimum ballot of these
+// else returns a 0-ballot and false
+// field: b, p, pOld or c
+func (scp *ScpNode) minCompatible(seq int, quorum Quorum, field string) (Ballot, bool) {
+	slot := scp.slots[seq]
+	minBallot := Ballot{}
+
+	for _, nodeID := range quorum {
+		nodeBallot := scp.states[nodeID].getBallot(field)
+		greater, compatible := compareBallots(minBallot, nodeBallot)
+		if !compatible {
+			return Ballot{}, false
+		}
+		if greater {
+			minBallot = nodeBallot
+		}
+	}
+
+	return minBallot, true
 }
 
 // -------- State -------- //
@@ -197,6 +240,7 @@ func (scp *ScpNode) step0(seq int) {
 }
 
 func (scp *ScpNode) step1(seq int) {
+
 	slot := scp.slots[seq]
 
 	// Condition for this step: b > p > c
@@ -208,32 +252,44 @@ func (scp *ScpNode) step1(seq int) {
 		return
 	}
 
+	// TODO: check if slot.phi is prepared
+
 	// Quorum all votes/accepts on aborting b's smaller and incompatible with 'beta'
 	// then set p = 'beta'
-	if bMin, ok := scp.checkQuorums(seq, "b"); ok {
-		scp.updatePs(seq, bMin)
+	if candidateB, ok := scp.checkQuorums(seq, "b"); ok {
+		if greater, _ := compareBallots(candidateB, slot.p); greater {
+			scp.updatePs(seq, candidateB)
+		}
 	}
 
-	if pMin, ok := scp.checkQuorums(seq, "p"); ok {
-		scp.updatePs(seq, pMin)
+	if candidateP, ok := scp.checkQuorums(seq, "p"); ok {
+		if greater, _ := compareBallots(candidateP, slot.p); greater {
+			scp.updatePs(seq, candidateP)
+		}
 	}
 
-	if pOldMin, ok := scp.checkQuorums(seq, "pOld"); ok {
-		scp.updatePs(seq, pOldMin)
+	if candidatePOld, ok := scp.checkQuorums(seq, "pOld"); ok {
+		if greater, _ := compareBallots(candidatePOld, slot.p); greater {
+			scp.updatePs(seq, candidatePOld)
+		}
 	}
 
 	// V-BlockingSet all accepts on aborting b's smaller and incompatible with 'beta'
 	// then set p = 'beta'
-	if pMin, ok := scp.checkVblockings(seq, "p"); ok {
-		scp.updatePs(seq, pMin)
+	if candidateP, ok := scp.checkVblockings(seq, "p"); ok {
+		if greater, _ := compareBallots(candidateP, slot.p); greater {
+			scp.updatePs(seq, candidateP)
+		}
 	}
 
-	if pOldMin, ok := scp.checkVBlockings(seq, "pOld"); ok {
-		scp.updatePs(seq, pOldMin)
+	if candidatePOld, ok := scp.checkVBlockings(seq, "pOld"); ok {
+		if greater, _ := compareBallots(candidatePOld, slot.p); greater {
+			scp.updatePs(seq, candidatePOld)
+		}
 	}
 }
 
-func (scp *ScpNode) updatePs (seq int, newP Ballot) {
+func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 	slot := scp.slots[seq]
 
 	// Only update pOld if necessary
