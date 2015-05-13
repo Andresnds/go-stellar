@@ -8,7 +8,6 @@ import "time"
 import "fmt"
 import crand "crypto/rand"
 import "encoding/base64"
-import "ledger"
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
@@ -21,7 +20,7 @@ func port(tag string, host int) string {
 	s := "/var/tmp/857-"
 	s += strconv.Itoa(os.Getuid()) + "/"
 	os.Mkdir(s, 0777)
-	s += "px-"
+	s += "scp-"
 	s += strconv.Itoa(os.Getpid()) + "-"
 	s += tag + "-"
 	s += strconv.Itoa(host)
@@ -72,7 +71,7 @@ func cleanup(scp []*ScpNode) {
 	}
 }
 
-func TestBasic(t *testing.T) {
+func TestScpBasic(t *testing.T) {
 	runtime.GOMAXPROCS(4)
 
 	const nscp = 4
@@ -85,7 +84,7 @@ func TestBasic(t *testing.T) {
 		scph[i] = port("basic", i)
 	}
 	for i := 0; i < nscp; i++ {
-		scp[i] = StartServer(scph, i, nil)
+		scp[i] = StartServer(scph, i, scpm)
 	}
 	scpm[0] = [][]int{ []int{0, 1, 2} }
 	scpm[1] = [][]int{ []int{1, 2, 3} }
@@ -94,7 +93,7 @@ func TestBasic(t *testing.T) {
 
 	fmt.Printf("Test: Single proposer ...\n")
 
-	op := ledger.Op{}
+	op := Op{}
 	op.XID = int64(1)
 	scp[0].Start(1, op)
 	waitn(t, scp, 0, nscp)
