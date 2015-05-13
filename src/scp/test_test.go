@@ -81,22 +81,23 @@ func TestBasic(t *testing.T) {
 	scpm := make(map[int][][]int)
 	defer cleanup(scp)
 
-	for i := 0; i < nscp; i++ {
-		scph[i] = port("basic", i)
-	}
-	for i := 0; i < nscp; i++ {
-		scp[i] = StartServer(scph, i, nil)
-	}
 	scpm[0] = [][]int{ []int{0, 1, 2} }
 	scpm[1] = [][]int{ []int{1, 2, 3} }
 	scpm[2] = [][]int{ []int{1, 2, 3} }
 	scpm[3] = [][]int{ []int{1, 2, 3} }
 
+	for i := 0; i < nscp; i++ {
+		scph[i] = port("basic", i)
+	}
+	for i := 0; i < nscp; i++ {
+		scp[i] = StartServer(scph, i, scpm)
+	}
+
 	fmt.Printf("Test: Single proposer ...\n")
 
 	op := ledger.Op{}
 	op.XID = int64(1)
-	scp[0].Start(1, op)
+	scp[0].Start(0, op)
 	waitn(t, scp, 0, nscp)
 
 	fmt.Printf("  ... Passed\n")
