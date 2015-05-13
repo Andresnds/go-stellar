@@ -360,8 +360,36 @@ func (scp *ScpNode) step2(seq int) {
 	}
 }
 
-func (scp *ScpNode) step3() {
+// Try to update phi: PREPARE -> FINISH
+func (scp *ScpNode) step3(seq int) {
+	slot := scp.slot[seq]
 
+	// Conditions: b = p = c
+	if !(areBallotsEqual(slot.b, slot.p) && areBallotsEqual(slot.p, slot.c)) {
+		return
+	}
+
+	// We need a quorum voting/accepting commit c
+	// Hence we need a quorum with our c
+	isValid := func (State peerState) bool {
+		return areBallotsEqual(peerState.c, slot.c)
+	}
+
+	if scp.hasQuorum(isValid) {
+		updatePhi(FINISH)
+		return
+	}
+
+	// Or we need a v-blocking accepting commit c
+	// Hence we need a v-blocking with our c and phi = FINISH
+	isValid = func (Slot peerState) bool {
+		return areBallotsEqual(peerState.c, slot.c) && (peerState.phi == FINISH)
+	}
+
+	if scp.hasVBlocking(isValid) {
+		updatePhi(FINISH)
+		return
+	}
 }
 
 func (scp *ScpNode) step4() {
