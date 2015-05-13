@@ -265,18 +265,21 @@ func (scp *ScpNode) step1(seq int) {
 	if candidateB, ok := scp.checkQuorums(seq, "b"); ok {
 		if greater, _ := compareBallots(candidateB, slot.p); greater {
 			scp.updatePs(seq, candidateB)
+			return
 		}
 	}
 
 	if candidateP, ok := scp.checkQuorums(seq, "p"); ok {
 		if greater, _ := compareBallots(candidateP, slot.p); greater {
 			scp.updatePs(seq, candidateP)
+			return
 		}
 	}
 
 	if candidatePOld, ok := scp.checkQuorums(seq, "pOld"); ok {
 		if greater, _ := compareBallots(candidatePOld, slot.p); greater {
 			scp.updatePs(seq, candidatePOld)
+			return
 		}
 	}
 
@@ -285,12 +288,14 @@ func (scp *ScpNode) step1(seq int) {
 	if candidateP, ok := scp.checkVblockings(seq, "p"); ok {
 		if greater, _ := compareBallots(candidateP, slot.p); greater {
 			scp.updatePs(seq, candidateP)
+			return
 		}
 	}
 
 	if candidatePOld, ok := scp.checkVBlockings(seq, "pOld"); ok {
 		if greater, _ := compareBallots(candidatePOld, slot.p); greater {
 			scp.updatePs(seq, candidatePOld)
+			return
 		}
 	}
 }
@@ -303,6 +308,13 @@ func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 		slot.pOld = p
 	}
 	slot.p = newP
+
+	// Ensure the invariant p ~ c
+	if _, compatible := compareBallots(slot.p, slot.c); !compatible {
+		// This means that we went from voting to commit c to accept (abort c)
+		// by setting c = 0, which is valid in FBA voting
+		slot.c = Ballot{}
+	}
 }
 
 // Try to update c
