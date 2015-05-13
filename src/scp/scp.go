@@ -234,6 +234,7 @@ func (scp *ScpNode) tryToUpdateState(seq int) bool {
 	step4(seq)
 }
 
+// Try to update b
 func (scp *ScpNode) step0(seq int) {
 	slot := scp.slots[seq]
 
@@ -247,7 +248,7 @@ func (scp *ScpNode) step0(seq int) {
 	}
 }
 
-// Update p
+// Try to update p
 func (scp *ScpNode) step1(seq int) {
 	slot := scp.slots[seq]
 
@@ -264,43 +265,30 @@ func (scp *ScpNode) step1(seq int) {
 		return
 	}
 
-	// Quorum all votes/accepts on aborting b's smaller and incompatible with 'beta'
-	// then set p = 'beta'
-	if candidateB, ok := scp.checkQuorums(seq, "b"); ok {
-		if greater, _ := compareBallots(candidateB, slot.p); greater {
-			scp.updatePs(seq, candidateB)
-			return
-		}
+	// To accept prepare b, we need a quorum voting/accepting prepare b
+	// Hence we need a quorum with b = slot.b or p = slot.b or pOld = slot.b
+	isValidB := func (peerState State) bool {
+		return areBallotsEqual(peerState.b, slot.b)
 	}
 
-	if candidateP, ok := scp.checkQuorums(seq, "p"); ok {
-		if greater, _ := compareBallots(candidateP, slot.p); greater {
-			scp.updatePs(seq, candidateP)
-			return
-		}
+	isValidP := func (peerState State) bool {
+		return areBallotsEqual(peerState.p, slot.b)
 	}
 
-	if candidatePOld, ok := scp.checkQuorums(seq, "pOld"); ok {
-		if greater, _ := compareBallots(candidatePOld, slot.p); greater {
-			scp.updatePs(seq, candidatePOld)
-			return
-		}
+	isValidPOld := func (peerState State) bool {
+		return areBallotsEqual(peerState.pOld, slot.b)
 	}
 
-	// V-BlockingSet all accepts on aborting b's smaller and incompatible with 'beta'
-	// then set p = 'beta'
-	if candidateP, ok := scp.checkVblockings(seq, "p"); ok {
-		if greater, _ := compareBallots(candidateP, slot.p); greater {
-			scp.updatePs(seq, candidateP)
-			return
-		}
+	if scp.hasQuorum(isValidB) || scp.hasQuorum(isValidP) || scp.hasQuorum(isValidPOld) {
+		scp.updatePs(seq, slot.b)
+		return
 	}
 
-	if candidatePOld, ok := scp.checkVBlockings(seq, "pOld"); ok {
-		if greater, _ := compareBallots(candidatePOld, slot.p); greater {
-			scp.updatePs(seq, candidatePOld)
-			return
-		}
+	// Or we need a v-blocking accepting prepare b
+	// Hence we need a v-blocking with p = slot.b or pOld = slot.b
+	if scp.hasVBlocking(isValidP) || scp.hasVBlocking(isValidPOld) {
+		scp.updatePs(seq, slot.b)
+		return
 	}
 }
 
@@ -322,7 +310,6 @@ func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 }
 
 // Try to update c
-// Node confirms b(= p) is prepared: a quorum of accepts that b is prepared
 func (scp *ScpNode) step2(seq int) {
 	slot := scp.slots[seq]
 
@@ -339,24 +326,20 @@ func (scp *ScpNode) step2(seq int) {
 		return
 	}
 
-	// Quorum all accepts on aborting b's smallers and incompatible with p
-	// then set c = b(= p)
-	if candidateP, ok := scp.checkQuorums(seq, "p"); ok {
-		if greater, _ := compareBallots(candidate, slot.p); ok {
-			// Conservatively update c to b, not to candidate
-			// so we keep the invariant c <= p <= b
-			slot.c = slot.b
-			return
-		}
+	// To vote on commit c, we need to confirm prepare b,
+	// so we need a quorum accepting prepare b
+	// Hence we need a quorum with p = slot.b(= slot.p) or pOld = slot.b(= slot.p)
+	isValidP := func (peerState State) bool {
+		return areBallotsEqual(peerState.p, slot.b)
 	}
 
-	if candidatePOld, ok := scp.checkQuorums(seq, "pOld"); ok {
-		if greater, _ := compareBallots(candidate, slot.p); ok {
-			// Conservatively update c to b, not to candidate
-			// so we keep the invariant c <= p <= b
-			slot.c = slot.b
-			return
-		}
+	isValidPOld := func (peerState State) bool {
+		return areBallotsEqual(peerState.pOld, slot.b)
+	}
+
+	if scp.hasQuorum(isValidP) || scp.hasQuorum(isValidPOld) {
+		slot.c = slot.b
+		return
 	}
 }
 
@@ -369,7 +352,7 @@ func (scp *ScpNode) step3(seq int) {
 		return
 	}
 
-	// We need a quorum voting/accepting commit c
+	// To accept commit c, we need a quorum voting/accepting commit c
 	// Hence we need a quorum with our c
 	isValid := func (peerState State) bool {
 		return areBallotsEqual(peerState.c, slot.c)
