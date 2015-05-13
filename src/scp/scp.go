@@ -173,9 +173,9 @@ func (scp *ScpNode) tryToUpdateState(seq int) bool {
 
 	step0(seq)
 	step1(seq)
-	step2()
-	step3()
-	step4()
+	step2(seq)
+	step3(seq)
+	step4(seq)
 }
 
 func (scp *ScpNode) step0(seq int) {
@@ -195,7 +195,7 @@ func (scp *ScpNode) step0(seq int) {
 func (scp *ScpNode) step1(seq int) {
 	slot := scp.slots[seq]
 
-	// Condition for this step: phi = PREPARE and b > p > c
+	// Conditions: phi = PREPARE and b > p > c
 	if slot.phi != PREPARE {
 		return
 	}
@@ -253,7 +253,7 @@ func (scp *ScpNode) updatePs(seq int, newP Ballot) {
 
 	// Only update pOld if necessary
 	if _, compatible := compareBallots(pOldMin, slot.p); compatible {
-		slot.pOld = p
+		slot.pOld = slot.p
 	}
 	slot.p = newP
 
@@ -315,7 +315,7 @@ func (scp *ScpNode) step4() {
 // -------- Helper Functions -------- //
 
 
-// --- State 2 helpers --- //
+// --- Step 2 helpers --- //
 
 // field: b, p, pOld or c
 // Check every quorum for a minCompatible ballot (candidate), and returns the best of these (the max)
@@ -410,7 +410,7 @@ func (scp *ScpNode) minCompatible(seq int, quorum Quorum, field string) (Ballot,
 	return minBallot, true
 }
 
-// --- State 3 helpers --- //
+// --- Step 3 helpers --- //
 
 // Check if every node in a quorum has the same value of c
 // If found, return (ballot, true)
