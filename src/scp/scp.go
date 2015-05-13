@@ -371,29 +371,46 @@ func (scp *ScpNode) step3(seq int) {
 
 	// We need a quorum voting/accepting commit c
 	// Hence we need a quorum with our c
-	isValid := func (State peerState) bool {
+	isValid := func (peerState State) bool {
 		return areBallotsEqual(peerState.c, slot.c)
 	}
 
 	if scp.hasQuorum(isValid) {
-		updatePhi(FINISH)
+		slot.phi = FINISH
 		return
 	}
 
 	// Or we need a v-blocking accepting commit c
 	// Hence we need a v-blocking with our c and phi = FINISH
-	isValid = func (Slot peerState) bool {
+	isValid = func (peerState State) bool {
 		return areBallotsEqual(peerState.c, slot.c) && (peerState.phi == FINISH)
 	}
 
 	if scp.hasVBlocking(isValid) {
-		updatePhi(FINISH)
+		slot.phi = FINISH
 		return
 	}
 }
 
-func (scp *ScpNode) step4() {
+// Try to update phi: FINISH -> EXTERNALIZE
+func (scp *ScpNode) step4(seq int) {
+	slot := scp.slot[seq]
 
+	// Conditions : phi = FINISH
+	if slot.phi != FINISH {
+		return
+	}
+
+	// To confirm commit c, we need a quorum accepting commit c
+	// Hence we need a quorum with our c and phi = FINISH
+	isValid := func (peerState State) bool {
+		return areBallotsEqual(peerState.c, slot.c) && (peerState.phi == FINISH)
+	}
+
+	if scp.hasQuorum(isValid) {
+		slot.phi = EXTERNALIZE
+		return
+	}
 }
 
 // -------- Helper Functions -------- //
