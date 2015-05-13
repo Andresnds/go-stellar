@@ -254,10 +254,9 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 // Tries to update it's state, given the information in M
 // Returns: bool stating if updated or not
 func (scp *ScpNode) tryToUpdateState(seq int) bool {
-	slot := scp.slots[seq]
-
 	// State before
-	stateBefore := slot.toState()
+	// TODO: implement func (state State) getCopy() {}
+	stateBefore := scp.slots[seq].states[scp.me].getCopy() // Copy it!!
 
 	// Apply the SCP steps
 	step0(seq)
@@ -266,8 +265,14 @@ func (scp *ScpNode) tryToUpdateState(seq int) bool {
 	step3(seq)
 	step4(seq)
 
-	// Check if there was any update at all
-	if stateBefore != slot.toState() {
+	// Check if there was an update
+	// TODO: Can't easily compare this kind of struct. Create method to compare?
+	stateAfter := scp.slots[seq].states[scp.me].getCopy()
+	if stateBefore.b.n != stateAfter.b.n ||
+		stateBefore.p.n != stateAfter.p.n ||
+		stateBefore.pOld.n != stateAfter.pOld.n ||
+		stateBefore.c.n != stateAfter.c.n ||
+		stateBefore.phi != stateAfter.phi {
 		return true
 	}
 	return false
