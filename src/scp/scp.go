@@ -23,6 +23,7 @@ type ScpNode struct {
 	peersSlices map[int][]QuorumSlice
 
 	slots map[int]*Slot // SCP runs in a Slot
+	quorums []Quorum
 }
 
 /* -------- State -------- */
@@ -113,6 +114,23 @@ func (scp *ScpNode) Init(id int, peers map[int]string, peerSlices map[int][]Quor
 	}
 
 	scp.slots = make(map[int]*Slot)
+
+	scp.quorums = findQuorums(scp.peerSlices)
+	// Store only the quorums which contain myself
+	for i, quorum := range scp.quorums {
+
+		contained := false
+		for _, v := quorum {
+			if v == scp.me {
+				contained = true
+				break
+			}
+		}
+
+		if !contained {
+			scp.quorums = append(scp.quorums[:i], scp.quorums[i+1:]...) // removing i'th element
+		}
+	}
 
 	// TODO: Initialize l and listen to network
 }
