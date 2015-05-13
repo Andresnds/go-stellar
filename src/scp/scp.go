@@ -161,8 +161,15 @@ func (scp *ScpNode) propose(seq int, v Ledger.Op) {
 	}
 }
 
-func (scp *ScpNode) Status(seq int) (..) {
-	// TODO!
+// Returns: true if a consensus was reached on seq, with it's value
+// false otherwise
+func (scp *ScpNode) Status(seq int) (bool, Ledger.Op) {
+	myState := scp.slots[seq].states[scp.me]
+
+	if myState.phi == EXTERNALIZE {
+		return true, myState.b.v
+	}
+	return false, Ledger.Op{}
 }
 
 // ------- RPC HANDLERS ------- //
