@@ -97,44 +97,25 @@ func TestScpBasic(t *testing.T) {
 	op := Op{}
 	op.XID = int64(1)
 	scp[0].Start(0, op)
-	waitn(t, scp, 0, nscp)
+	waitn(t, scp, 0, 1)
 
 	fmt.Printf("  ... Passed\n")
 
-	// fmt.Printf("Test: Many proposers, same value ...\n")
+	fmt.Printf("Test: Many proposers, same value ...\n")
 
-	// for i := 0; i < nscp; i++ {
-	// 	scp[i].Start(1, 77)
-	// }
-	// waitn(t, scp, 1, nscp)
+	for i := 0; i < nscp; i++ {
+		scp[i].Start(1, Op{XID: int64(10)})
+	}
+	waitn(t, scp, 1, 1)
 
-	// fmt.Printf("  ... Passed\n")
+	fmt.Printf("  ... Passed\n")
 
-	// fmt.Printf("Test: Many proposers, different values ...\n")
+	fmt.Printf("Test: Many proposers, different values ...\n")
 
-	// scp[0].Start(2, 100)
-	// scp[1].Start(2, 101)
-	// scp[2].Start(2, 102)
-	// waitn(t, scp, 2, nscp)
+	scp[0].Start(2, Op{XID: int64(100)})
+	scp[1].Start(2, Op{XID: int64(101)})
+	scp[2].Start(2, Op{XID: int64(102)})
+	waitn(t, scp, 2, 1)
 
-	// fmt.Printf("  ... Passed\n")
-
-	// fmt.Printf("Test: Out-of-order instances ...\n")
-
-	// scp[0].Start(7, 700)
-	// scp[0].Start(6, 600)
-	// scp[1].Start(5, 500)
-	// waitn(t, scp, 7, nscp)
-	// scp[0].Start(4, 400)
-	// scp[1].Start(3, 300)
-	// waitn(t, scp, 6, nscp)
-	// waitn(t, scp, 5, nscp)
-	// waitn(t, scp, 4, nscp)
-	// waitn(t, scp, 3, nscp)
-
-	// if scp[0].Max() != 7 {
-	// 	t.Fatalf("wrong Max()")
-	// }
-
-	// fmt.Printf("  ... Passed\n")
+	fmt.Printf("  ... Passed\n")
 }
