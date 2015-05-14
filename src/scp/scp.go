@@ -84,6 +84,10 @@ func (state State) isInitialized() bool {
 	return state.B.N != 0
 }
 
+func (state State) String() string {
+	return fmt.Sprintf("B.n=%d, P.n=%d, POld.n=%d, C.n=%d, Phi=%d", state.B.N, state.P.N, state.POld.N, state.C.N, state.Phi)
+}
+
 /* -------- Ballot -------- */
 
 type Ballot struct {
@@ -117,7 +121,7 @@ func compareBallots(b1, b2 Ballot) (greater, compatible bool) {
 }
 
 func areBallotsEqual(b1, b2 Ballot) bool {
-	sameN := (b2.N == b2.N)
+	sameN := (b1.N == b2.N)
 	_, compatible := compareBallots(b1, b2)
 	return (sameN && compatible)
 }
@@ -165,7 +169,6 @@ func (scp *ScpNode) Start(seq int, v ledger.Op) {
 func (scp *ScpNode) propose(seq int, v ledger.Op) {
 	// Locked
 	scp.mu.Lock()
-	defer scp.mu.Unlock()
 
 	scp.DPrintf("Timeout! Propose(seq=%d, v=%+v)", seq, v)
 
@@ -174,8 +177,12 @@ func (scp *ScpNode) propose(seq int, v ledger.Op) {
 	if myState.Phi != EXTERNALIZE {
 		scp.DPrintf("Proposing new ballot")
 		myState.B.N += 1
-		scp.broadcastMessage(seq)
+		myStateCopy := myState.getCopy()
+		scp.mu.Unlock()
+		scp.broadcastMessage(seq, myStateCopy)
+		return
 	}
+	scp.mu.Unlock()
 }
 
 // Returns: true if a consensus was reached on seq, with it's value
@@ -183,6 +190,8 @@ func (scp *ScpNode) propose(seq int, v ledger.Op) {
 func (scp *ScpNode) Status(seq int) (bool, ledger.Op) {
 	slot := scp.getSlot(seq)
 	myState := slot.states[scp.me]
+
+	scp.DPrintf("Status(seq=%d): state=%v", seq, myState)
 
 	if myState.Phi == EXTERNALIZE {
 		return true, myState.B.V
@@ -196,7 +205,6 @@ func (scp *ScpNode) Status(seq int) (bool, ledger.Op) {
 func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessageReply) error {
 	// Locked
 	scp.mu.Lock()
-	defer scp.mu.Unlock()
 
 	scp.DPrintf("RPC handling ProcessMessage: args=%+v", args)
 
@@ -207,13 +215,26 @@ func (scp *ScpNode) ProcessMessage(args *ProcessMessageArgs, reply *ProcessMessa
 	// TODO: Check if this is the most recent message
 	slot.states[args.ID] = &args.State
 
+
 	// Run the SCP steps to update this slot's state
 	updated := scp.tryToUpdateState(args.Seq)
 
+	// If i'm finished and he is not, just send him my state
+	if slot.states[scp.me].Phi == EXTERNALIZE && args.State.Phi != EXTERNALIZE {
+		stateCopy := slot.states[scp.me].getCopy()
+		scp.mu.Unlock()
+		scp.replyMessage(args.Seq, stateCopy, args.ID)
+		return nil
+	}
+
 	// Broadcast message to peers if needed
 	if updated {
-		scp.broadcastMessage(args.Seq)
+		stateCopy := slot.states[scp.me].getCopy()
+		scp.mu.Unlock()
+		scp.broadcastMessage(args.Seq, stateCopy)
+		return nil
 	}
+	scp.mu.Unlock()
 	return nil
 }
 
@@ -223,21 +244,43 @@ func (scp *ScpNode) ExchangeQSlices(args *ExchangeQSlicesArgs, reply *ExchangeQS
 }
 
 // Broadcast message to other scp nodes
-func (scp *ScpNode) broadcastMessage(seq int) {
-	state := scp.slots[seq].states[scp.me]
-
+func (scp *ScpNode) broadcastMessage(seq int, state State) {
 	scp.DPrintf("broadcastMessage(seq=%d), state=%+v", seq, state)
 
-	for _, s := range scp.peers {
-		scp.DPrintf("Sending message to peer=%s", s)
-		args := &ProcessMessageArgs{seq, scp.me, state.getCopy()}
+	// Assumes scp.peers is immutable! If not, create a copy before unlocking.
+	for peerId, peer := range scp.peers {
+		// Don't send it to yourself
+		if peerId == scp.me {
+			continue
+		}
+
+		args := &ProcessMessageArgs{seq, scp.me, state}
 		var reply ProcessMessageReply
-		ok := call(s, "ScpNode.ProcessMessage", args, &reply)
+
+		scp.DPrintf("Sending message to peer=%s", peer)
+		ok := call(peer, "ScpNode.ProcessMessage", args, &reply)
 		if !ok {
-			scp.DPrintf("Sending message to peer=%s failed!", s)
+			scp.DPrintf("Sending message to peer=%s failed!", peer)
 		}
 	}
 }
+
+// Used when we are externalized, so we just reply whoever sent us a message
+func (scp *ScpNode) replyMessage(seq int, state State, peerId int) {
+	scp.DPrintf("replyMessage(seq=%d) to %d, state=%+v", seq, peerId, state)
+
+	peer := scp.peers[peerId]
+
+	args := &ProcessMessageArgs{seq, scp.me, state}
+	var reply ProcessMessageReply
+
+	scp.DPrintf("Sending message to peer=%s", peer)
+	ok := call(peer, "ScpNode.ProcessMessage", args, &reply)
+	if !ok {
+		scp.DPrintf("Sending message to peer=%s failed!", peer)
+	}
+}
+
 
 // -------- State update -------- //
 
@@ -295,7 +338,13 @@ func (scp *ScpNode) step1(seq int) {
 
 	scp.DPrintf("step1(seq=%d), state=%+v", seq, myState)
 
-	// Conditions: phi = PREPARE and b > p > c
+	// Should not be recently uninitilized
+	if !myState.isInitialized() {
+		scp.DPrintf("Doesn't meet step 1 requirements: uninitialized")
+		return
+	}
+
+	// Conditions: phi = PREPARE and b > p >= c
 	if myState.Phi != PREPARE {
 		scp.DPrintf("Doesn't meet step 1 requirements")
 		return
@@ -306,10 +355,7 @@ func (scp *ScpNode) step1(seq int) {
 		return
 	}
 
-	if greater, _ := compareBallots(myState.P, myState.C); !greater {
-		scp.DPrintf("Doesn't meet step 1 requirements")
-		return
-	}
+	// No need to check p >= c, just for asserting
 
 	// To accept prepare b, we need a quorum voting/accepting prepare b
 	// Hence we need a quorum with b = myState.B or p = myState.B or pOld = myState.B
@@ -363,6 +409,12 @@ func (scp *ScpNode) step2(seq int) {
 
 	scp.DPrintf("step2(seq=%d), state=%+v", seq, myState)
 
+	// Should not be uninitilized
+	if !myState.isInitialized() {
+		scp.DPrintf("Doesn't meet step 2 requirements: uninitialized")
+		return
+	}
+
 	// Conditions: phi = PREPARE, b = p, b != c
 	if myState.Phi != PREPARE {
 		scp.DPrintf("Doesn't meet step 2 requirements")
@@ -403,7 +455,18 @@ func (scp *ScpNode) step3(seq int) {
 
 	scp.DPrintf("step3(seq=%d), state=%+v", seq, myState)
 
-	// Conditions: b = p = c
+	// Should not be uninitilized
+	if !myState.isInitialized() {
+		scp.DPrintf("Doesn't meet step 3 requirements: uninitialized")
+		return
+	}
+
+	// Conditions: phi=PREPARE and b = p = c
+	if myState.Phi != PREPARE {
+		scp.DPrintf("Doesn't meet step 3 requirements")
+		return
+	}
+
 	if !(areBallotsEqual(myState.B, myState.P) && areBallotsEqual(myState.P, myState.C)) {
 		scp.DPrintf("Doesn't meet step 3 requirements")
 		return
@@ -440,6 +503,12 @@ func (scp *ScpNode) step4(seq int) {
 
 	scp.DPrintf("step4(seq=%d), state=%+v", seq, myState)
 
+	// Should not be uninitilized
+	if !myState.isInitialized() {
+		scp.DPrintf("Doesn't meet step 4 requirements: uninitialized")
+		return
+	}
+
 	// Conditions : phi = FINISH
 	if myState.Phi != FINISH {
 		scp.DPrintf("Doesn't meet step 4 requirements")
@@ -463,6 +532,14 @@ func (scp *ScpNode) step4(seq int) {
 
 // Returns true if there is a quorum that satisfies the validator isValid
 func (scp *ScpNode) hasQuorum(seq int, isValid func(State) bool) bool {
+	// Printings for debugging
+	// scp.DPrintf("quorums=%v", scp.quorums)
+	// s := ""
+	// for peerId, _ := range scp.peers {
+	// 	s = s + fmt.Sprintf("[peer %d state=%v] ", peerId, scp.slots[seq].states[peerId])
+	// }
+	// scp.DPrintf("peers state=%s", s)
+
 	for _, quorum := range scp.quorums {
 		if scp.isQuorumValid(seq, quorum, isValid) {
 			return true
