@@ -5,6 +5,7 @@ const (
 	ErrNoAccount          = "ErrNoAccount"
 	ErrInsuficientBalance = "ErrInsuficientBalance"
 	ErrInvalidTranscation = "ErrInvalidTranscation"
+	ErrSignatureForged    = "ErrSignatureForged"
 )
 
 type Err string
@@ -14,7 +15,8 @@ type TransactionArgs struct {
 	To        string
 	Value     float32
 	XID       int64
-	Signature string
+	RSign     string
+	SSign     string
 }
 
 type TransactionReply struct {

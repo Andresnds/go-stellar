@@ -10,13 +10,18 @@ import "os"
 import "syscall"
 import "encoding/gob"
 import "math/rand"
+import "math/big"
+import "crypto/dsa"
 import "time"
+
+import "bytes"
 
 type Op struct {
 	From      string
 	To        string
 	Value     float32
-	Signature string
+	RSign     string
+	SSign     string
 	XID       int64
 	Op        string
 }
@@ -134,6 +139,11 @@ func (lg *Ledger) GetBalance(args *GetBalanceArgs, reply *GetBalanceReply) error
 func (lg *Ledger) Transaction(args *TransactionArgs, reply *TransactionReply) error {
 	lg.mu.Lock()
 	defer lg.mu.Unlock()
+	
+	if !validSignature(args) {
+		reply.Err = ErrSignatureForged
+		return nil
+	}
 
     if args.Value <= 0 {
         reply.Err = ErrInvalidTranscation
@@ -145,7 +155,8 @@ func (lg *Ledger) Transaction(args *TransactionArgs, reply *TransactionReply) er
 		To:        args.To,
 		Value:     args.Value,
 		XID:       args.XID,
-		Signature: args.Signature,
+		RSign:     args.RSign,
+		SSign:     args.SSign,
 		Op:        "Transaction",
 	}
 
@@ -170,6 +181,8 @@ func (lg *Ledger) InsertCoins(args *InsertCoinsArgs, reply *InsertCoinsReply) er
 	lg.mu.Lock()
 	defer lg.mu.Unlock()
 
+	// TODO: verify signature?
+
     if args.Value < 0 {
         reply.Err = ErrInvalidTranscation
         return nil
@@ -187,6 +200,34 @@ func (lg *Ledger) InsertCoins(args *InsertCoinsArgs, reply *InsertCoinsReply) er
 
 	reply.Err = OK
 	return nil
+}
+
+func validSignature(args *TransactionArgs) bool {
+	pCache := new(bytes.Buffer)
+	decCache := gob.NewDecoder(pCache)
+
+	pCache.WriteString(args.From)
+	var pk1 dsa.PublicKey
+	decCache.Decode(&pk1)
+
+	pCache.Reset()
+	pCache.WriteString(args.To)
+	var pk2 dsa.PublicKey
+	decCache.Decode(&pk2)
+
+	transaction := getTransaction(&pk1, &pk2, args.Value)
+
+	pCache.Reset()
+	pCache.WriteString(args.RSign)
+	var rSign big.Int
+	decCache.Decode(&rSign)
+
+	pCache.Reset()
+	pCache.WriteString(args.SSign)
+	var sSign big.Int
+	decCache.Decode(&sSign)
+
+	return dsa.Verify(&pk1, transaction, &rSign, &sSign)
 }
 
 // tell the server to shut itself down.

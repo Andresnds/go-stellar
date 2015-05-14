@@ -54,9 +54,9 @@ func (ck *Clerk) GetBalance(account string) (float32, bool) {
 
 // sends a Transction to be executed on the system
 // return false if the transaction is invalid
-func (ck *Clerk) Transaction(from string, to string, value float32, signature string) bool {
+func (ck *Clerk) Transaction(from string, to string, value float32, rSign, sSign string) bool {
 	XID := nrand()
-	args := TransactionArgs{from, to, value, XID, signature}
+	args := TransactionArgs{from, to, value, XID, rSign, sSign}
 	var reply TransactionReply
 
 	t := 10 * time.Millisecond
